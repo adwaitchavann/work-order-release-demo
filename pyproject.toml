@@ -1,0 +1,10 @@
+[project]
+name = "work-order-release-demo"
+version = "0.1.0"
+description = "SIMULATED demo: an AI agent proposes releasing a work order; a mock determination gates a separate executor."
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

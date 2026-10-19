@@ -1,0 +1,45 @@
+{
+  "case_id": "02_admit_execution_failure",
+  "title": "ADMIT, then the MES rejects the release (execution failure)",
+  "description": "SYNTHETIC. The determination is ADMIT, but the simulated MES has the work order locked by another session, so the release attempt fails. ADMIT permitted the attempt; it did not guarantee success. The receipt is spent.",
+  "proposed_action": {
+    "action_id": "ACT-SYN-0002",
+    "agent_id": "SYN-PLANNING-AGENT",
+    "action_type": "RELEASE_WORK_ORDER",
+    "work_order_id": "WO-SYN-1002",
+    "plant": "PLANT-SYN-01",
+    "line": "LINE-2",
+    "part_number": "PN-SYN-2210",
+    "part_revision": "C",
+    "quantity": 250
+  },
+  "evidence": {
+    "approvals": [
+      {
+        "approval_id": "APR-SYN-5002",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-07",
+        "status": "ACTIVE",
+        "scope": {
+          "work_order_id": "WO-SYN-1002",
+          "line": "LINE-2",
+          "part_number": "PN-SYN-2210",
+          "part_revision": "C",
+          "max_quantity": 250
+        }
+      }
+    ],
+    "checks": {
+      "bom_revision_confirmed": true,
+      "material_available": true,
+      "quality_hold_clear": true
+    }
+  },
+  "expected": {
+    "verdict": "ADMIT",
+    "outcome": "FAILED",
+    "cause": null,
+    "mes_error_code": "WORK_ORDER_LOCKED",
+    "work_order_status": "PLANNED"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "case_id": "04_defer_missing_evidence",
+  "title": "Missing required evidence -> DEFER, no release",
+  "description": "SYNTHETIC. The approval is active and in scope, but the quality-hold check has not been provided. The determination is DEFER until it arrives, and the executor refuses the release.",
+  "proposed_action": {
+    "action_id": "ACT-SYN-0004",
+    "agent_id": "SYN-PLANNING-AGENT",
+    "action_type": "RELEASE_WORK_ORDER",
+    "work_order_id": "WO-SYN-1004",
+    "plant": "PLANT-SYN-01",
+    "line": "LINE-3",
+    "part_number": "PN-SYN-4480",
+    "part_revision": "B",
+    "quantity": 600
+  },
+  "evidence": {
+    "approvals": [
+      {
+        "approval_id": "APR-SYN-5004",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-03",
+        "status": "ACTIVE",
+        "scope": {
+          "work_order_id": "WO-SYN-1004",
+          "line": "LINE-3",
+          "part_number": "PN-SYN-4480",
+          "part_revision": "B",
+          "max_quantity": 600
+        }
+      }
+    ],
+    "checks": {
+      "bom_revision_confirmed": true,
+      "material_available": true
+    }
+  },
+  "expected": {
+    "verdict": "DEFER",
+    "outcome": "REFUSED",
+    "cause": "VERDICT_NOT_ADMIT",
+    "work_order_status": "PLANNED"
+  }
+}

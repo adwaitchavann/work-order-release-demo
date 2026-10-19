@@ -1,0 +1,59 @@
+{
+  "case_id": "06_admit_reissued_approval",
+  "title": "Approval revoked, then a new one issued -> ADMIT, work order released",
+  "description": "SYNTHETIC. The supervisor revoked APR-SYN-5006 over a material shortage, then issued a new approval, APR-SYN-5016, once the shortage cleared. Revocation is per approval, so the new active approval is honoured and the revoked one is not relied on. 'supersedes' records the link.",
+  "proposed_action": {
+    "action_id": "ACT-SYN-0006",
+    "agent_id": "SYN-PLANNING-AGENT",
+    "action_type": "RELEASE_WORK_ORDER",
+    "work_order_id": "WO-SYN-1006",
+    "plant": "PLANT-SYN-01",
+    "line": "LINE-3",
+    "part_number": "PN-SYN-5120",
+    "part_revision": "B",
+    "quantity": 300
+  },
+  "evidence": {
+    "approvals": [
+      {
+        "approval_id": "APR-SYN-5006",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-03",
+        "status": "REVOKED",
+        "revoked_reason": "material shortage on LINE-3",
+        "scope": {
+          "work_order_id": "WO-SYN-1006",
+          "line": "LINE-3",
+          "part_number": "PN-SYN-5120",
+          "part_revision": "B",
+          "max_quantity": 300
+        }
+      },
+      {
+        "approval_id": "APR-SYN-5016",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-03",
+        "status": "ACTIVE",
+        "supersedes": "APR-SYN-5006",
+        "scope": {
+          "work_order_id": "WO-SYN-1006",
+          "line": "LINE-3",
+          "part_number": "PN-SYN-5120",
+          "part_revision": "B",
+          "max_quantity": 300
+        }
+      }
+    ],
+    "checks": {
+      "bom_revision_confirmed": true,
+      "material_available": true,
+      "quality_hold_clear": true
+    }
+  },
+  "expected": {
+    "verdict": "ADMIT",
+    "outcome": "RELEASED",
+    "cause": null,
+    "work_order_status": "RELEASED"
+  }
+}

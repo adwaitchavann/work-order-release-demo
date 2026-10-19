@@ -1,0 +1,45 @@
+{
+  "case_id": "05_refer_quality_signoff",
+  "title": "Needs another authority's approval -> REFER, no release",
+  "description": "SYNTHETIC. The production supervisor has approved, but PN-SYN-7730 is flagged safety-critical in the policy, so release also needs Quality Engineering sign-off. None is on record, so the decision is referred and the executor refuses the release.",
+  "proposed_action": {
+    "action_id": "ACT-SYN-0005",
+    "agent_id": "SYN-PLANNING-AGENT",
+    "action_type": "RELEASE_WORK_ORDER",
+    "work_order_id": "WO-SYN-1005",
+    "plant": "PLANT-SYN-01",
+    "line": "LINE-1",
+    "part_number": "PN-SYN-7730",
+    "part_revision": "D",
+    "quantity": 80
+  },
+  "evidence": {
+    "approvals": [
+      {
+        "approval_id": "APR-SYN-5005",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-11",
+        "status": "ACTIVE",
+        "scope": {
+          "work_order_id": "WO-SYN-1005",
+          "line": "LINE-1",
+          "part_number": "PN-SYN-7730",
+          "part_revision": "D",
+          "max_quantity": 80
+        }
+      }
+    ],
+    "checks": {
+      "bom_revision_confirmed": true,
+      "material_available": true,
+      "quality_hold_clear": true
+    }
+  },
+  "expected": {
+    "verdict": "REFER",
+    "referred_to": "QUALITY_ENGINEERING",
+    "outcome": "REFUSED",
+    "cause": "VERDICT_NOT_ADMIT",
+    "work_order_status": "PLANNED"
+  }
+}

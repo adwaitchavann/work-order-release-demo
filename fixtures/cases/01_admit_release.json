@@ -1,0 +1,44 @@
+{
+  "case_id": "01_admit_release",
+  "title": "Valid approval, matching scope -> ADMIT, work order released",
+  "description": "SYNTHETIC. The production supervisor's approval is active and covers the exact work order, line, part revision and quantity. All required checks pass.",
+  "proposed_action": {
+    "action_id": "ACT-SYN-0001",
+    "agent_id": "SYN-PLANNING-AGENT",
+    "action_type": "RELEASE_WORK_ORDER",
+    "work_order_id": "WO-SYN-1001",
+    "plant": "PLANT-SYN-01",
+    "line": "LINE-2",
+    "part_number": "PN-SYN-2210",
+    "part_revision": "C",
+    "quantity": 400
+  },
+  "evidence": {
+    "approvals": [
+      {
+        "approval_id": "APR-SYN-5001",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-07",
+        "status": "ACTIVE",
+        "scope": {
+          "work_order_id": "WO-SYN-1001",
+          "line": "LINE-2",
+          "part_number": "PN-SYN-2210",
+          "part_revision": "C",
+          "max_quantity": 400
+        }
+      }
+    ],
+    "checks": {
+      "bom_revision_confirmed": true,
+      "material_available": true,
+      "quality_hold_clear": true
+    }
+  },
+  "expected": {
+    "verdict": "ADMIT",
+    "outcome": "RELEASED",
+    "cause": null,
+    "work_order_status": "RELEASED"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "case_id": "03_halt_revoked_approval",
+  "title": "Revoked approval -> HALT, no release",
+  "description": "SYNTHETIC. The production supervisor's approval was revoked after a schedule change. All other evidence is present, so the result is HALT and the executor refuses the release.",
+  "proposed_action": {
+    "action_id": "ACT-SYN-0003",
+    "agent_id": "SYN-PLANNING-AGENT",
+    "action_type": "RELEASE_WORK_ORDER",
+    "work_order_id": "WO-SYN-1003",
+    "plant": "PLANT-SYN-01",
+    "line": "LINE-1",
+    "part_number": "PN-SYN-3105",
+    "part_revision": "A",
+    "quantity": 120
+  },
+  "evidence": {
+    "approvals": [
+      {
+        "approval_id": "APR-SYN-5003",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-11",
+        "status": "REVOKED",
+        "revoked_reason": "line schedule changed after approval",
+        "scope": {
+          "work_order_id": "WO-SYN-1003",
+          "line": "LINE-1",
+          "part_number": "PN-SYN-3105",
+          "part_revision": "A",
+          "max_quantity": 120
+        }
+      }
+    ],
+    "checks": {
+      "bom_revision_confirmed": true,
+      "material_available": true,
+      "quality_hold_clear": true
+    }
+  },
+  "expected": {
+    "verdict": "HALT",
+    "outcome": "REFUSED",
+    "cause": "VERDICT_NOT_ADMIT",
+    "work_order_status": "PLANNED"
+  }
+}

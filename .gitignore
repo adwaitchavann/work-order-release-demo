@@ -1,0 +1,13 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Demo output
+out/
+
+# OS and editor clutter
+.DS_Store
+__MACOSX/
+.ipynb_checkpoints/
