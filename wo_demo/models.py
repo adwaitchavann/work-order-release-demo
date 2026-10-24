@@ -59,7 +59,14 @@ class ProposedAction:
 
 @dataclass(frozen=True)
 class WorkOrderRecord:
-    """The MES system of record for one work order: the source of truth for part, revision, line and planned quantity."""
+    """The MES system of record for one work order.
+
+    Authoritative for the work order's facts (part, revision, line, planned quantity), its
+    status, and its release-readiness signals (BOM confirmed, material staged, quality hold
+    clear). `version` increases on every change to any of those, so a receipt can tell
+    "changed and changed back" apart from "never changed". `locked` is a transient MES
+    session lock: execution state, not a determination input, and it does not bump the version.
+    """
 
     work_order_id: str
     plant: str
@@ -67,8 +74,10 @@ class WorkOrderRecord:
     part_number: str
     part_revision: str
     planned_quantity: int
-    status: str  # "PLANNED" or "RELEASED"
+    status: str | None  # "PLANNED" is releasable; None means the MES reports no status
     locked: bool = False
+    readiness: Mapping[str, Any] = field(default_factory=dict, hash=False)
+    version: int = 1
 
     def facts(self) -> dict[str, Any]:
         """The facts a determination relies on. Status and lock state are execution state, not facts."""
@@ -93,8 +102,9 @@ class WorkOrderRecord:
             part_number=d["part_number"],
             part_revision=d["part_revision"],
             planned_quantity=d["planned_quantity"],
-            status=d["status"],
+            status=d.get("status"),
             locked=bool(d.get("locked", False)),
+            readiness=dict(d.get("readiness") or {}),
         )
 
 
@@ -141,20 +151,28 @@ class Approval:
 
 @dataclass(frozen=True)
 class EvidenceBundle:
-    """Approvals plus required checks. A check passes only if its value is exactly True."""
+    """Approvals, readiness checks and work order status.
+
+    The same shape is used for two very different things: what the authoritative sources report
+    (assembled by AuthoritativeSources) and what the proposing caller claims (never authoritative).
+    A check passes only if its authoritative value is exactly True.
+    """
 
     approvals: tuple[Approval, ...] = ()
     checks: Mapping[str, Any] = field(default_factory=dict)
+    status: str | None = None
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "EvidenceBundle":
         return cls(
             approvals=tuple(Approval.from_dict(a) for a in d.get("approvals", [])),
             checks=dict(d.get("checks", {})),
+            status=d.get("status"),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {"approvals": [a.to_dict() for a in self.approvals], "checks": dict(self.checks)}
+        return {"approvals": [a.to_dict() for a in self.approvals], "checks": dict(self.checks),
+                "status": self.status}
 
     def digest(self) -> str:
         return sha256_digest(self.to_dict())
@@ -178,6 +196,7 @@ class Policy:
     safety_critical_approver_role: str
     receipt_ttl_seconds: int
     version: str
+    releasable_statuses: tuple[str, ...] = ("PLANNED",)
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "Policy":
@@ -188,6 +207,7 @@ class Policy:
             safety_critical_approver_role=d["safety_critical_approver_role"],
             receipt_ttl_seconds=int(d["receipt_ttl_seconds"]),
             version=d["policy_version"],
+            releasable_statuses=tuple(d["releasable_statuses"]),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -198,6 +218,7 @@ class Policy:
             "safety_critical_parts": sorted(self.safety_critical_parts),
             "safety_critical_approver_role": self.safety_critical_approver_role,
             "receipt_ttl_seconds": self.receipt_ttl_seconds,
+            "releasable_statuses": list(self.releasable_statuses),
         }
 
     def digest(self) -> str:

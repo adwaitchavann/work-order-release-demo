@@ -1,32 +1,39 @@
 """Stage 3: the SIMULATED mock determiner.
 
 This is a stand-in for a real determination service, written only for this demo.
-It reads the proposed action, the MES work order record and the evidence,
-returns one of the four verdicts with reason codes, and issues a signed receipt
-for every determination (ADMIT, HALT, DEFER and REFER alike). It can look work
-orders up but cannot release them: it is given a read-only reader, not the MES.
+It returns one of the four verdicts with reason codes and issues a signed receipt
+for every determination (ADMIT, HALT, DEFER and REFER alike).
 
-Facts come from the MES record, never from the proposal. Part number, revision,
-line and planned quantity are read from the record; the proposal's own claims
-about them are only compared against it.
+Where its inputs come from (see authority.py):
+  - The caller supplies the proposed action: what it wants to do.
+  - Everything the verdict depends on is read from the authoritative sources and
+    assembled into one view: facts, status and readiness from the MES, then
+    approvals from the approval system. These are two sequential reads, not a
+    consistent cross-system snapshot (see authority.py). The determiner can read
+    the sources but cannot change or release anything.
+  - The caller may also send its own evidence (status, checks, approvals). Caller
+    claims cannot establish admissibility; contradictions may independently cause
+    HALT. A claim that contradicts the record halts (like FACT_MISMATCH for the
+    proposal's facts), and a claim the record can't confirm is noted and ignored,
+    so it never fills in missing state.
 
-Rules (synthetic):
-  HALT  - the request is invalid (unsupported action type, unknown work order,
-          quantity not a whole number from 1 to the planned quantity), the
-          proposal's facts disagree with the MES record, a required approval was
-          revoked and nothing else in force covers the action, no approval in
-          force covers the record's facts and quantity, or a required check is False.
-  DEFER - required evidence is missing or unusable: the base approval, or a
-          required check that is absent, null or anything other than a boolean.
-  REFER - the part on the MES record is safety-critical and the second
-          authority has not signed off.
-  ADMIT - none of the above. Only a check value of exactly True passes.
+Rules (synthetic), all evaluated on the authoritative view:
+  HALT  - invalid request (action type, unknown work order, quantity); proposal facts
+          or caller claims that contradict the record; a status that isn't releasable;
+          a revoked approval with nothing else in force covering the action; no
+          approval in force covers the record's facts and quantity; an unrecognized
+          approval status; a readiness check that is False.
+  REFER - the part on the record is safety-critical and the second authority hasn't
+          signed off in the approval system.
+  DEFER - required state is missing or unusable: no status reported, no base
+          approval on record, or a readiness check that is absent, null or not a boolean.
+  ADMIT - none of the above.
 
-When several apply, precedence is HALT > DEFER > REFER > ADMIT.
+When several apply, precedence is HALT > REFER > DEFER > ADMIT. Every finding is
+still reported, most severe first. A REFER that also has missing state is still
+referred; the missing state is listed alongside the referral.
 
-Revoked, then reissued: revocation is per approval. A new active approval that
-covers the action is honoured; the revoked one is simply not relied on. See
-_assess_authority and the README.
+Revoked, then reissued: revocation is per approval (see _assess_authority).
 """
 
 from __future__ import annotations
@@ -34,8 +41,10 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Callable, Protocol
+from typing import Any, Callable
 
+from .authority import AuthoritativeSources, AuthoritativeView, unknown_work_order_digest
+from .canonical import canonical_json
 from .clock import Clock
 from .models import (
     FACT_FIELDS,
@@ -51,12 +60,8 @@ from .receipts import Receipt
 from .signing import ReceiptSigner
 from .verdicts import Verdict
 
-PRECEDENCE = (Verdict.HALT, Verdict.DEFER, Verdict.REFER)
+PRECEDENCE = (Verdict.HALT, Verdict.REFER, Verdict.DEFER)
 ACTIVE, REVOKED = "ACTIVE", "REVOKED"
-
-
-class WorkOrderLookup(Protocol):
-    def lookup(self, work_order_id: str) -> WorkOrderRecord | None: ...
 
 
 @dataclass(frozen=True)
@@ -81,6 +86,8 @@ class Determination:
     policy_version: str | None = None
     evidence_digest: str | None = None
     work_order_facts: dict[str, Any] | None = None  # from the MES record, as used for the verdict
+    authoritative: dict[str, Any] | None = None     # the authoritative view the verdict was based on
+    notes: tuple[Reason, ...] = ()                  # caller claims that were not used, and why
 
     def to_dict(self) -> dict:
         return {
@@ -88,11 +95,13 @@ class Determination:
             "determiner": self.determiner,
             "verdict": self.verdict.value,
             "reasons": [{"code": r.code, "detail": r.detail} for r in self.reasons],
+            "notes": [{"code": r.code, "detail": r.detail} for r in self.notes],
             "referred_to": self.referred_to,
             "action_digest": self.action_digest,
             "evidence_digest": self.evidence_digest,
             "policy_version": self.policy_version,
             "work_order_facts": self.work_order_facts,
+            "authoritative": self.authoritative,
             "determined_at": self.determined_at,
             "receipt": self.receipt.to_dict(),
         }
@@ -104,6 +113,7 @@ class _Findings:
         default_factory=lambda: {Verdict.HALT: [], Verdict.DEFER: [], Verdict.REFER: []}
     )
     satisfied: list[Reason] = field(default_factory=list)
+    notes: list[Reason] = field(default_factory=list)
     referred_to: str | None = None
 
     def add(self, verdict: Verdict, code: str, detail: str) -> None:
@@ -112,9 +122,20 @@ class _Findings:
     def ok(self, code: str, detail: str) -> None:
         self.satisfied.append(Reason(code, detail))
 
+    def note(self, code: str, detail: str) -> None:
+        self.notes.append(Reason(code, detail))
+
 
 def _new_receipt_id() -> str:
     return "rcpt-" + uuid.uuid4().hex
+
+
+def _same(a: Any, b: Any) -> bool:
+    """Strict equality: True and 1, or 400 and 400.0, are different values."""
+    try:
+        return canonical_json(a) == canonical_json(b)
+    except (TypeError, ValueError):
+        return False
 
 
 class MockDeterminer:
@@ -127,39 +148,47 @@ class MockDeterminer:
         clock: Clock,
         receipt_id_factory: Callable[[], str] = _new_receipt_id,
         *,
-        work_orders: WorkOrderLookup,
+        sources: AuthoritativeSources,
     ) -> None:
         self._policy = policy
         self._signer = signer
         self._clock = clock
         self._new_receipt_id = receipt_id_factory
-        self._work_orders = work_orders
+        self._sources = sources
 
-    def determine(self, action: ProposedAction, evidence: EvidenceBundle) -> Determination:
+    def determine(self, action: ProposedAction, caller_evidence: EvidenceBundle | None = None) -> Determination:
+        """`caller_evidence` is whatever the proposing caller asserts. It is not authoritative."""
         findings = _Findings()
         policy = self._policy
 
-        record = self._assess_request(action, findings)
-        if record is not None:
+        # One view of the authoritative sources (MES read, then approvals read); everything below uses it.
+        view = self._sources.current(action.work_order_id)
+        record = view.record if view is not None else None
+
+        self._assess_request(action, record, findings)
+        if view is not None:
+            authority = view.evidence
+            self._assess_status(authority.status, findings)
             self._assess_authority(
                 role=policy.base_approver_role,
-                approvals=evidence.approvals,
-                record=record,
+                approvals=authority.approvals,
+                record=view.record,
                 quantity=action.quantity,
                 findings=findings,
                 when_missing=Verdict.DEFER,
             )
             # Safety-critical is decided by the part on the MES record, not the part the proposal names.
-            if record.part_number in policy.safety_critical_parts:
+            if view.record.part_number in policy.safety_critical_parts:
                 self._assess_authority(
                     role=policy.safety_critical_approver_role,
-                    approvals=evidence.approvals,
-                    record=record,
+                    approvals=authority.approvals,
+                    record=view.record,
                     quantity=action.quantity,
                     findings=findings,
                     when_missing=Verdict.REFER,
                 )
-        self._assess_checks(evidence, findings)
+            self._assess_checks(authority.checks, findings)
+            self._compare_claims(caller_evidence, view, findings)
 
         verdict = next((v for v in PRECEDENCE if findings.by_verdict[v]), Verdict.ADMIT)
         if verdict is Verdict.ADMIT:
@@ -170,7 +199,7 @@ class MockDeterminer:
 
         now = self._clock.now()
         action_digest = action.digest()
-        evidence_digest = evidence.digest()
+        evidence_digest = view.digest() if view is not None else unknown_work_order_digest(action.work_order_id)
         receipt = self._signer.sign(
             receipt_id=self._new_receipt_id(),
             verdict=verdict.value,
@@ -193,20 +222,21 @@ class MockDeterminer:
             policy_version=policy.version,
             evidence_digest=evidence_digest,
             work_order_facts=record.facts() if record is not None else None,
+            authoritative=view.to_dict() if view is not None else None,
+            notes=tuple(findings.notes),
         )
 
     # -- rules ---------------------------------------------------------------
 
-    def _assess_request(self, action: ProposedAction, findings: _Findings) -> WorkOrderRecord | None:
-        """Is the request valid, judged against the MES record? Returns the record if one exists."""
+    def _assess_request(self, action: ProposedAction, record: WorkOrderRecord | None, findings: _Findings) -> None:
+        """Is the request valid, judged against the MES record?"""
         if action.action_type != RELEASE_WORK_ORDER:
             findings.add(Verdict.HALT, "ACTION_TYPE_INVALID",
                          f"action type {action.action_type!r} is not {RELEASE_WORK_ORDER}")
 
-        record = self._work_orders.lookup(action.work_order_id)
         if record is None:
             findings.add(Verdict.HALT, "WORK_ORDER_UNKNOWN", f"{action.work_order_id} is not in the MES")
-            return None
+            return
 
         if not valid_release_quantity(action.quantity, record.planned_quantity):
             findings.add(Verdict.HALT, "QUANTITY_INVALID",
@@ -222,7 +252,15 @@ class MockDeterminer:
                              f"proposal says {name} {claimed!r}; MES record says {actual!r}")
         if not mismatched:
             findings.ok("FACTS_MATCH_RECORD", "plant, line, part and revision match the MES record")
-        return record
+
+    def _assess_status(self, status: Any, findings: _Findings) -> None:
+        if status is None:
+            findings.add(Verdict.DEFER, "MISSING_EVIDENCE", "the MES reports no status for this work order")
+        elif status in self._policy.releasable_statuses:
+            findings.ok("STATUS_RELEASABLE", f"MES status is {status}")
+        else:
+            findings.add(Verdict.HALT, "WORK_ORDER_NOT_RELEASABLE",
+                         f"MES status is {status!r}; only {', '.join(self._policy.releasable_statuses)} can be released")
 
     def _assess_authority(
         self,
@@ -234,7 +272,7 @@ class MockDeterminer:
         findings: _Findings,
         when_missing: Verdict,
     ) -> None:
-        """One authority's sign-off, including the revoked-then-reissued rule.
+        """One authority's sign-off, as recorded in the approval system.
 
         Revocation is per approval: revoking an approval withdraws that approval
         only. A different approval from the same role that is active, in force
@@ -256,7 +294,7 @@ class MockDeterminer:
                 findings.add(Verdict.REFER, "AUTHORITY_REQUIRED",
                              f"{record.part_number} is safety-critical; release also needs {role} sign-off")
             else:
-                findings.add(Verdict.DEFER, "MISSING_EVIDENCE", f"no {role} approval on record")
+                findings.add(Verdict.DEFER, "MISSING_EVIDENCE", f"no {role} approval in the approval system")
             return
 
         unrecognized = [a for a in mine if a.status not in (ACTIVE, REVOKED)]
@@ -290,20 +328,61 @@ class MockDeterminer:
                          f"no {role} approval in force covers this work order's line, part, revision "
                          f"and quantity on the MES record")
 
-    def _assess_checks(self, evidence: EvidenceBundle, findings: _Findings) -> None:
-        """Fail closed: only a value of exactly True passes."""
+    def _assess_checks(self, checks: Any, findings: _Findings) -> None:
+        """Readiness signals as reported by the MES. Fail closed: only exactly True passes."""
         all_passed = True
         for name in self._policy.required_checks:
-            value = evidence.checks.get(name)
+            value = checks.get(name)
             if value is True:
                 continue
             all_passed = False
             if value is None:
-                findings.add(Verdict.DEFER, "MISSING_EVIDENCE", f"required check '{name}' not provided")
+                findings.add(Verdict.DEFER, "MISSING_EVIDENCE", f"the MES reports no value for '{name}'")
             elif value is False:
-                findings.add(Verdict.HALT, "CHECK_FAILED", f"required check '{name}' failed")
+                findings.add(Verdict.HALT, "CHECK_FAILED", f"the MES reports '{name}' as false")
             else:
                 findings.add(Verdict.DEFER, "EVIDENCE_INVALID",
-                             f"required check '{name}' is {value!r}; only true counts as passed")
+                             f"the MES reports '{name}' as {value!r}; only true counts as passed")
         if all_passed:
-            findings.ok("EVIDENCE_COMPLETE", "all required checks present and exactly true")
+            findings.ok("EVIDENCE_COMPLETE", "the MES reports every required check as exactly true")
+
+    def _compare_claims(self, claims: Any, view: AuthoritativeView, findings: _Findings) -> None:
+        """Caller claims cannot establish admissibility; contradictions may independently cause HALT.
+        Anything the record can't confirm is noted and ignored."""
+        if claims is None:
+            return
+        if not isinstance(claims, EvidenceBundle):
+            findings.add(Verdict.HALT, "CLAIM_MALFORMED", "caller evidence is not in a recognizable form")
+            return
+        authority = view.evidence
+
+        if claims.status is not None:
+            if authority.status is None:
+                findings.note("CLAIM_NOT_USED", f"caller says status {claims.status!r}; the MES reports none")
+            elif not _same(claims.status, authority.status):
+                findings.add(Verdict.HALT, "CLAIM_MISMATCH",
+                             f"caller says status {claims.status!r}; the MES says {authority.status!r}")
+
+        for name, claimed in claims.checks.items():
+            if claimed is None:
+                continue
+            actual = authority.checks.get(name)
+            if actual is None:
+                findings.note("CLAIM_NOT_USED",
+                              f"caller says {name}={claimed!r}; the MES has no value, so the claim is not used")
+            elif not _same(claimed, actual):
+                findings.add(Verdict.HALT, "CLAIM_MISMATCH",
+                             f"caller says {name}={claimed!r}; the MES says {actual!r}")
+
+        on_record = {a.approval_id: a for a in authority.approvals}
+        for claimed in claims.approvals:
+            actual = on_record.get(getattr(claimed, "approval_id", None))
+            if actual is None:
+                findings.note("CLAIM_NOT_USED",
+                              f"caller lists {getattr(claimed, 'approval_id', claimed)!r}; "
+                              f"the approval system has no such approval, so it is not used")
+            elif not _same(claimed.to_dict(), actual.to_dict()):
+                findings.add(Verdict.HALT, "CLAIM_MISMATCH",
+                             f"caller's copy of {actual.approval_id} differs from the approval system "
+                             f"(caller: {claimed.status}, scope max {claimed.scope.max_quantity}; "
+                             f"system: {actual.status}, scope max {actual.scope.max_quantity})")

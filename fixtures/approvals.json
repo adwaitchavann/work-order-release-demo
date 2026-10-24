@@ -1,0 +1,141 @@
+{
+  "_note": "SYNTHETIC simulated approval system, the system of record for approvals. Every identifier is invented.",
+  "approvals": {
+    "WO-SYN-1001": [
+      {
+        "approval_id": "APR-SYN-5001",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-07",
+        "status": "ACTIVE",
+        "scope": {
+          "work_order_id": "WO-SYN-1001",
+          "line": "LINE-2",
+          "part_number": "PN-SYN-2210",
+          "part_revision": "C",
+          "max_quantity": 400
+        }
+      }
+    ],
+    "WO-SYN-1002": [
+      {
+        "approval_id": "APR-SYN-5002",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-07",
+        "status": "ACTIVE",
+        "scope": {
+          "work_order_id": "WO-SYN-1002",
+          "line": "LINE-2",
+          "part_number": "PN-SYN-2210",
+          "part_revision": "C",
+          "max_quantity": 250
+        }
+      }
+    ],
+    "WO-SYN-1003": [
+      {
+        "approval_id": "APR-SYN-5003",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-11",
+        "status": "REVOKED",
+        "revoked_reason": "line schedule changed after approval",
+        "scope": {
+          "work_order_id": "WO-SYN-1003",
+          "line": "LINE-1",
+          "part_number": "PN-SYN-3105",
+          "part_revision": "A",
+          "max_quantity": 120
+        }
+      }
+    ],
+    "WO-SYN-1004": [
+      {
+        "approval_id": "APR-SYN-5004",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-03",
+        "status": "ACTIVE",
+        "scope": {
+          "work_order_id": "WO-SYN-1004",
+          "line": "LINE-3",
+          "part_number": "PN-SYN-4480",
+          "part_revision": "B",
+          "max_quantity": 600
+        }
+      }
+    ],
+    "WO-SYN-1005": [
+      {
+        "approval_id": "APR-SYN-5005",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-11",
+        "status": "ACTIVE",
+        "scope": {
+          "work_order_id": "WO-SYN-1005",
+          "line": "LINE-1",
+          "part_number": "PN-SYN-7730",
+          "part_revision": "D",
+          "max_quantity": 80
+        }
+      }
+    ],
+    "WO-SYN-1006": [
+      {
+        "approval_id": "APR-SYN-5006",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-03",
+        "status": "REVOKED",
+        "revoked_reason": "material shortage on LINE-3",
+        "scope": {
+          "work_order_id": "WO-SYN-1006",
+          "line": "LINE-3",
+          "part_number": "PN-SYN-5120",
+          "part_revision": "B",
+          "max_quantity": 300
+        }
+      },
+      {
+        "approval_id": "APR-SYN-5016",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-03",
+        "status": "ACTIVE",
+        "supersedes": "APR-SYN-5006",
+        "scope": {
+          "work_order_id": "WO-SYN-1006",
+          "line": "LINE-3",
+          "part_number": "PN-SYN-5120",
+          "part_revision": "B",
+          "max_quantity": 300
+        }
+      }
+    ],
+    "WO-SYN-1007": [
+      {
+        "approval_id": "APR-SYN-5007",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-07",
+        "status": "ACTIVE",
+        "scope": {
+          "work_order_id": "WO-SYN-1007",
+          "line": "LINE-2",
+          "part_number": "PN-SYN-6610",
+          "part_revision": "A",
+          "max_quantity": 150
+        }
+      }
+    ],
+    "WO-SYN-1008": [
+      {
+        "approval_id": "APR-SYN-5008",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-11",
+        "status": "ACTIVE",
+        "scope": {
+          "work_order_id": "WO-SYN-1008",
+          "line": "LINE-1",
+          "part_number": "PN-SYN-8020",
+          "part_revision": "C",
+          "max_quantity": 500
+        }
+      }
+    ]
+  }
+}

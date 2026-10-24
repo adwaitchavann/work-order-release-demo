@@ -45,13 +45,23 @@ def test_verifier_exposes_no_way_to_sign():
     assert public == {"check_signature"}
 
 
-def test_determiner_does_not_import_the_executor_or_the_mes():
-    assert not _imports("determiner.py") & {"executor", "mes", "evidence_registry"}
+def test_determiner_does_not_import_the_executor_or_the_systems_of_record():
+    assert not _imports("determiner.py") & {"executor", "mes", "approval_registry"}
 
 
-def test_determiner_is_given_a_read_only_view_of_the_mes(env):
-    reader = env.determiner._work_orders
-    assert {n for n in dir(reader) if not n.startswith("_")} == {"lookup"}
+def test_authority_layer_does_not_import_the_systems_of_record_or_the_determiner():
+    assert not _imports("authority.py") & {"mes", "approval_registry", "determiner", "executor", "signing"}
+
+
+def test_determiner_is_given_a_read_only_view_of_the_authoritative_sources(env):
+    sources = env.determiner._sources
+    assert {n for n in dir(sources) if not n.startswith("_")} == {"current"}
+    assert {n for n in dir(sources._work_orders) if not n.startswith("_")} == {"lookup"}
+    assert {n for n in dir(sources._approvals) if not n.startswith("_")} == {"current"}
+
+
+def test_determiner_and_executor_read_the_same_authoritative_sources(env):
+    assert env.determiner._sources is env.executor._evidence is env.sources
 
 
 def test_gitignore_excludes_os_and_notebook_clutter():

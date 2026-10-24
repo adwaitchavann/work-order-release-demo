@@ -17,20 +17,35 @@ action and a receipt, it checks, in this order:
      9. same policy version and content                -> POLICY_VERSION_MISMATCH
   D. The determination permits execution
     10. the verdict is ADMIT                           -> VERDICT_NOT_ADMIT
-  E. What the determination relied on is still true
-    11. evidence on record still matches               -> EVIDENCE_NOT_CURRENT
+  E. Single use
+    11. the receipt has not been used                  -> RECEIPT_ALREADY_USED
+  F. What the determination relied on is still true (re-read from the authoritative sources)
     12. the MES record's facts are unchanged           -> WORK_ORDER_CHANGED
-  F. Single use
-    13. the receipt has not been used                  -> RECEIPT_ALREADY_USED
+    13. the authoritative view (MES status and
+        readiness, approvals, and both versions)
+        still matches evidence_digest                  -> EVIDENCE_NOT_CURRENT
 
 If every check passes, it marks the receipt consumed *before* calling the MES,
 so the receipt is spent whether the release then succeeds or fails. A retry
 needs a new determination.
 
+  G. The MES write is conditional (see mes.py). The executor passes the MES
+     version it verified in step 13. Inside one critical section the MES checks
+     that the work order is still at that version, has no active quality hold,
+     isn't session-locked and is still PLANNED, and only then writes. If QA
+     places a hold after step 13, the release fails (FAILED,
+     STATE_CHANGED_BEFORE_RELEASE) instead of going ahead on earlier state.
+     Approvals live in a separate system the MES can't see, so an approval
+     revoked after step 13 is NOT caught here. That window is unresolved.
+
+Single use is checked before currency because a successful release itself
+changes the work order's status; a replayed receipt should be reported as
+already used, not as stale.
+
 The executor never produces or infers a verdict. Its only outcomes are
 RELEASED, FAILED and REFUSED. It does not import the determiner, the signer or
 the demo key; it is handed a verifier. Missing configuration (no active policy,
-no evidence source) refuses rather than skipping the check.
+no authoritative source) refuses rather than skipping the check.
 """
 
 from __future__ import annotations
@@ -42,7 +57,7 @@ from typing import Protocol
 
 from .clock import Clock
 from .mes import MESError, SimulatedMES
-from .models import RELEASE_WORK_ORDER, EvidenceBundle, PolicyRef, ProposedAction, valid_release_quantity
+from .models import RELEASE_WORK_ORDER, PolicyRef, ProposedAction, valid_release_quantity
 from .receipts import Receipt
 from .verdicts import Verdict
 from .verification import ReceiptVerifier
@@ -70,8 +85,27 @@ class RefusalCause(str, Enum):
     RECEIPT_ALREADY_USED = "RECEIPT_ALREADY_USED"
 
 
+class _VersionedRecord(Protocol):
+    version: int
+
+
+class _View(Protocol):
+    record: _VersionedRecord
+
+    def digest(self) -> str: ...
+
+
 class EvidenceSource(Protocol):
-    def current(self, work_order_id: str) -> EvidenceBundle | None: ...
+    """In the demo this is AuthoritativeSources: the same read-only view the determiner uses."""
+
+    def current(self, work_order_id: str) -> _View | None: ...
+
+
+@dataclass(frozen=True)
+class _Cleared:
+    """Every executor check passed. Carries the MES version the release must be conditional on."""
+
+    mes_version: int
 
 
 @dataclass(frozen=True)
@@ -130,15 +164,18 @@ class ReleaseExecutor:
         self._evidence = evidence_source
 
     def release(self, action: ProposedAction, receipt: Receipt | None) -> ExecutionResult:
-        refusal = self._check(action, receipt)
-        if refusal is not None:
-            cause, detail = refusal
+        checked = self._check(action, receipt)
+        if not isinstance(checked, _Cleared):
+            cause, detail = checked
             return self._result(action, receipt, ExecutionOutcome.REFUSED, detail, cause=cause)
 
         assert receipt is not None
         self._consumed.mark(receipt.receipt_id)  # spent from here on, whatever happens next
         try:
-            self._mes.release(action.work_order_id, action.quantity)
+            # G. Conditional write. The MES re-checks, atomically with the write, that the work order is still
+            # at the version verified in F and has no active quality hold. A change that lands after F but
+            # before the write makes the MES reject the release instead of applying it against earlier state.
+            self._mes.release(action.work_order_id, action.quantity, expected_version=checked.mes_version)
         except MESError as e:
             return self._result(action, receipt, ExecutionOutcome.FAILED,
                                 f"MES rejected the release: {e.message}", mes_error_code=e.code)
@@ -146,7 +183,7 @@ class ReleaseExecutor:
 
     # -- checks --------------------------------------------------------------
 
-    def _check(self, action: ProposedAction, receipt: Receipt | None) -> tuple[RefusalCause, str] | None:
+    def _check(self, action: ProposedAction, receipt: Receipt | None) -> "tuple[RefusalCause, str] | _Cleared":
         # A. The request itself, against the MES record. Nothing here reads the receipt.
         if action.action_type != RELEASE_WORK_ORDER:
             return (RefusalCause.ACTION_TYPE_INVALID,
@@ -191,22 +228,24 @@ class ReleaseExecutor:
         if receipt.verdict != Verdict.ADMIT.value:
             return RefusalCause.VERDICT_NOT_ADMIT, f"receipt verdict is {receipt.verdict}; only ADMIT permits release"
 
-        # E. What the determination relied on must still be true.
-        if self._evidence is None:
-            return RefusalCause.EVIDENCE_NOT_CURRENT, "executor has no evidence source configured"
-        on_record = self._evidence.current(action.work_order_id)
-        if on_record is None:
-            return RefusalCause.EVIDENCE_NOT_CURRENT, f"no evidence on record for {action.work_order_id}"
-        if receipt.evidence_digest != on_record.digest():
-            return RefusalCause.EVIDENCE_NOT_CURRENT, "evidence on record has changed since the determination"
-        if receipt.facts_digest != record.facts_digest():
-            return RefusalCause.WORK_ORDER_CHANGED, "MES record facts have changed since the determination"
-
-        # F. Single use.
+        # E. Single use.
         if receipt.receipt_id in self._consumed:
             return RefusalCause.RECEIPT_ALREADY_USED, f"{receipt.receipt_id} was already used"
 
-        return None
+        # F. What the determination relied on must still be true, re-read from the authoritative sources.
+        if receipt.facts_digest != record.facts_digest():
+            return RefusalCause.WORK_ORDER_CHANGED, "MES record facts have changed since the determination"
+        if self._evidence is None:
+            return RefusalCause.EVIDENCE_NOT_CURRENT, "executor has no authoritative source configured"
+        on_record = self._evidence.current(action.work_order_id)
+        if on_record is None:
+            return RefusalCause.EVIDENCE_NOT_CURRENT, f"no authoritative state for {action.work_order_id}"
+        if receipt.evidence_digest != on_record.digest():
+            return (RefusalCause.EVIDENCE_NOT_CURRENT,
+                    "authoritative state (MES status or readiness, or approvals) has changed since the determination")
+
+        # The digest matched, so this is the MES version the determination was based on.
+        return _Cleared(mes_version=on_record.record.version)
 
     def _result(
         self,
