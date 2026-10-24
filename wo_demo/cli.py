@@ -3,6 +3,7 @@
     python -m wo_demo list
     python -m wo_demo run [--case CASE_ID] [--json PATH]
     python -m wo_demo gate
+    python -m wo_demo state
 """
 
 from __future__ import annotations
@@ -17,8 +18,9 @@ from .fixtures import get_case, load_cases, load_policy
 from .gate_demo import run_gate_demo
 from .pipeline import CaseRun, run_case
 from .receipts import SIGNATURE_ALGORITHM
+from .state_demo import run_state_demo
 
-BANNER = "SIMULATED: mock determinations, demo HMAC key, in-memory MES. Synthetic data only."
+BANNER = "SIMULATED: mock determinations, demo HMAC key, in-memory MES and approval system. Synthetic data only."
 RULE = "-" * 78
 
 
@@ -32,6 +34,15 @@ def _yn(v) -> str:
     return f"INVALID({v!r})"
 
 
+def _approvals(approvals) -> str:
+    parts = []
+    for a in approvals:
+        s = a["scope"]
+        extra = f", supersedes {a['supersedes']}" if a.get("supersedes") else ""
+        parts.append(f"{a['approval_id']} {a['approver_role']} {a['status']} (max {s['max_quantity']}{extra})")
+    return "; ".join(parts)
+
+
 def render(run: CaseRun) -> str:
     c, d, e = run.case, run.determination, run.effect
     a = c.action
@@ -42,28 +53,29 @@ def render(run: CaseRun) -> str:
     out.append(f"    plant {a.plant}, {a.line}, part {a.part_number} rev {a.part_revision}, qty {a.quantity}")
     out.append(f"    action digest {a.digest()[:23]}...")
 
+    required = load_policy().required_checks
     out.append("[2] EVIDENCE")
-    f = run.record_facts
-    if f:
-        out.append(f"    MES record (source of facts): {f['line']}, part {f['part_number']} rev {f['part_revision']},"
-                   f" planned {f['planned_quantity']}")
+    view = run.authoritative
+    if view is None:
+        out.append("    authoritative: the MES has no such work order")
     else:
-        out.append("    MES record: none")
-    if not c.evidence.approvals:
-        out.append("    approvals: none")
-    for ap in c.evidence.approvals:
-        s = ap.scope
-        extra = f", supersedes {ap.supersedes}" if ap.supersedes else ""
-        out.append(f"    approval {ap.approval_id}  {ap.approver_role}  {ap.status}"
-                   f"  (scope {s.work_order_id}, {s.line}, {s.part_number} rev {s.part_revision},"
-                   f" max {s.max_quantity}{extra})")
-    checks = {name: c.evidence.checks.get(name) for name in load_policy().required_checks}
-    out.append("    checks: " + ", ".join(f"{k}={_yn(v)}" for k, v in checks.items()))
+        f, ev = run.record_facts, view["evidence"]
+        out.append(f"    authoritative  MES v{view['mes_version']}: {f['line']}, part {f['part_number']} rev"
+                   f" {f['part_revision']}, planned {f['planned_quantity']}, status {ev['status'] or 'MISSING'}")
+        out.append("                   readiness: " + ", ".join(f"{k}={_yn(ev['checks'].get(k))}" for k in required))
+        out.append(f"                   approval system v{view['approvals_version']}: "
+                   + (_approvals(ev["approvals"]) or "no approvals"))
+    claims = c.caller_evidence
+    out.append(f"    caller claims  (not authoritative): status {claims.status or '-'}; "
+               + ", ".join(f"{k}={_yn(claims.checks.get(k))}" for k in required if k in claims.checks))
+    out.append("                   approvals: " + (_approvals([a.to_dict() for a in claims.approvals]) or "none"))
 
     out.append("[3] DETERMINATION  [SIMULATED - mock determiner, not a real Coherence determination]")
     out.append(f"    verdict: {d.verdict.value}" + (f"  (referred to {d.referred_to})" if d.referred_to else ""))
     for r in d.reasons:
         out.append(f"      - {r}")
+    for r in d.notes:
+        out.append(f"      note: {r}")
     out.append(f"    receipt {d.receipt.receipt_id[:17]}... bound to {d.receipt.work_order_id}, "
                f"expires {d.receipt.expires_at[11:19]} UTC, {SIGNATURE_ALGORITHM}")
     out.append(f"    also bound: policy {d.receipt.policy_version}, evidence {d.receipt.evidence_digest[:19]}...,"
@@ -120,6 +132,23 @@ def cmd_gate(_args) -> int:
     return 0
 
 
+def cmd_state(_args) -> int:
+    steps, env = run_state_demo()
+    print(BANNER)
+    print(RULE)
+    print("Authoritative state changes between proposals (caller's claims stay the same throughout)")
+    print(RULE)
+    for i, s in enumerate(steps, 1):
+        marker = {"state": "  ~", "decide": "  ?", "execute": "  >"}[s.kind]
+        print(f"{i:>2}.{marker} {s.label:60} {s.result:36} MES v{s.mes_version}")
+        if s.kind == "decide" and s.result != "ADMIT":
+            print(f"{'':6}{', '.join(s.codes)}")
+    print(RULE)
+    print("~ a system of record changed   ? determination   > release attempt   (MES v = version when the step began)")
+    print(f"MES release calls: {len(env.mes.call_log)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m wo_demo", description=BANNER)
     sub = p.add_subparsers(dest="command", required=True)
@@ -129,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--json", metavar="PATH", help="also write a JSON trace to PATH")
     r.set_defaults(func=cmd_run)
     sub.add_parser("gate", help="show the executor refusing misuse").set_defaults(func=cmd_gate)
+    sub.add_parser("state", help="show determinations following the authoritative state").set_defaults(func=cmd_state)
     args = p.parse_args(argv)
     return args.func(args)
 

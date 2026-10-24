@@ -1,5 +1,8 @@
 """Tests for the five review fixes: fail-closed checks, MES record as source of facts, request
-validation in both components, revoked-then-reissued approvals, and receipt bindings."""
+validation in both components, revoked-then-reissued approvals, and receipt bindings.
+
+Since the authoritative-state change, evidence is set in the systems of record (MES readiness and
+the approval system) rather than passed in by the caller, so each rule is tested where it now applies."""
 
 from dataclasses import replace
 
@@ -21,11 +24,17 @@ def _with_checks(case, **checks):
     return replace(case.evidence, checks={**case.evidence.checks, **checks})
 
 
+def _make_authoritative(env, work_order_id, evidence):
+    """Write the evidence into the systems of record: approvals to the approval system, checks to MES readiness."""
+    env.approvals.record(work_order_id, evidence.approvals)
+    env.mes.set_readiness(work_order_id, evidence.checks)
+
+
 def _decide_and_release(env, case, evidence, action=None):
-    """Put the evidence on record, decide on it, and hand the receipt straight to the executor."""
+    """Make `evidence` the authoritative state, decide with no caller claims, and hand the receipt to the executor."""
     action = action or case.action
-    env.evidence.record(action.work_order_id, evidence)
-    d = env.determiner.determine(action, evidence)
+    _make_authoritative(env, action.work_order_id, evidence)
+    d = env.determiner.determine(action)
     return d, env.executor.release(action, d.receipt)
 
 
@@ -105,7 +114,8 @@ def test_safety_critical_status_follows_the_mes_record(env, admit_case):
     scoped = replace(approval, scope=replace(approval.scope, part_number="PN-SYN-7730"))
     action = replace(admit_case.action, part_number="PN-SYN-7730")
 
-    d = env.determiner.determine(action, replace(admit_case.evidence, approvals=(scoped,)))
+    env.approvals.record("WO-SYN-1001", (scoped,))
+    d = env.determiner.determine(action)
 
     assert d.verdict is Verdict.REFER
     assert d.referred_to == "QUALITY_ENGINEERING"
@@ -249,9 +259,9 @@ def test_unrecognized_approval_status_halts(env, reissue_case, status):
 def test_approval_revoked_after_admit_stops_the_receipt(env, reissue_case, assert_mes_untouched):
     d = env.determiner.determine(reissue_case.action, reissue_case.evidence)
     assert d.verdict is Verdict.ADMIT
-    revoked = tuple(replace(a, status="REVOKED") if a.status == "ACTIVE" else a
-                    for a in reissue_case.evidence.approvals)
-    env.evidence.record("WO-SYN-1006", replace(reissue_case.evidence, approvals=revoked))
+    on_record, _ = env.approvals.current("WO-SYN-1006")
+    env.approvals.record("WO-SYN-1006", tuple(replace(a, status="REVOKED") if a.status == "ACTIVE" else a
+                                             for a in on_record))
 
     result = env.executor.release(reissue_case.action, d.receipt)
 
@@ -263,21 +273,22 @@ def test_approval_revoked_after_admit_stops_the_receipt(env, reissue_case, asser
 
 def test_receipt_binds_evidence_digest_and_policy_version(env, admit_case):
     r = env.determiner.determine(admit_case.action, admit_case.evidence).receipt
-    assert r.evidence_digest == admit_case.evidence.digest()
-    assert r.policy_version == env.policy.version == "SYN-REL-POLICY-v3"
+    assert r.evidence_digest == env.sources.current("WO-SYN-1001").digest()
+    assert r.policy_version == env.policy.version == "SYN-REL-POLICY-v4"
     assert r.policy_digest == env.policy.digest()
     assert r.facts_digest == env.mes.lookup("WO-SYN-1001").facts_digest()
 
 
-def test_different_evidence_gives_a_different_evidence_digest(env, admit_case):
-    a = env.determiner.determine(admit_case.action, admit_case.evidence).receipt
-    b = env.determiner.determine(admit_case.action, _with_checks(admit_case, material_available=None)).receipt
+def test_different_authoritative_evidence_gives_a_different_evidence_digest(env, admit_case):
+    a = env.determiner.determine(admit_case.action).receipt
+    env.mes.update_readiness("WO-SYN-1001", material_available=None)
+    b = env.determiner.determine(admit_case.action).receipt
     assert a.evidence_digest != b.evidence_digest
 
 
 def test_receipt_from_an_older_policy_is_refused(env, admit_case, assert_mes_untouched):
     old = MockDeterminer(replace(env.policy, version="SYN-REL-POLICY-v2"), env.signer, env.clock,
-                         work_orders=env.mes.reader())
+                         sources=env.sources)
     result = env.executor.release(admit_case.action, old.determine(admit_case.action, admit_case.evidence).receipt)
     assert (result.outcome, result.cause) == (REFUSED, RefusalCause.POLICY_VERSION_MISMATCH)
     assert_mes_untouched()
@@ -285,7 +296,7 @@ def test_receipt_from_an_older_policy_is_refused(env, admit_case, assert_mes_unt
 
 def test_policy_edited_without_a_version_bump_is_refused(env, admit_case, assert_mes_untouched):
     edited = replace(env.policy, safety_critical_parts=frozenset())  # same version string, different content
-    old = MockDeterminer(edited, env.signer, env.clock, work_orders=env.mes.reader())
+    old = MockDeterminer(edited, env.signer, env.clock, sources=env.sources)
     result = env.executor.release(admit_case.action, old.determine(admit_case.action, admit_case.evidence).receipt)
     assert result.cause is RefusalCause.POLICY_VERSION_MISMATCH
     assert_mes_untouched()
@@ -304,14 +315,13 @@ def test_receipt_without_evidence_digest_is_refused(env, admit_case, sign_receip
     assert_mes_untouched()
 
 
-def test_admit_on_evidence_that_is_not_on_record_is_refused(env, admit_case, assert_mes_untouched):
-    """Calling code decides on doctored evidence; the executor compares against the evidence on record."""
-    doctored = _with_checks(admit_case, quality_hold_clear=True, extra_note=True)
+def test_caller_evidence_the_mes_does_not_have_is_not_used(env, admit_case):
+    """Extra caller evidence can't change the determination: it is noted, not bound, and not decisive."""
+    doctored = _with_checks(admit_case, extra_note=True)
     d = env.determiner.determine(admit_case.action, doctored)
     assert d.verdict is Verdict.ADMIT
-    result = env.executor.release(admit_case.action, d.receipt)
-    assert result.cause is RefusalCause.EVIDENCE_NOT_CURRENT
-    assert_mes_untouched()
+    assert "CLAIM_NOT_USED" in [n.code for n in d.notes]
+    assert d.receipt.evidence_digest == env.sources.current("WO-SYN-1001").digest()
 
 
 def test_mes_facts_changed_after_admit_is_refused(env, admit_case, assert_mes_untouched):

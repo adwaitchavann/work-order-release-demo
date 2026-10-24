@@ -1,4 +1,10 @@
-"""Loads the synthetic fixtures in ../fixtures. No customer data is used anywhere."""
+"""Loads the synthetic fixtures in ../fixtures. No customer data is used anywhere.
+
+  policy.json        the rules
+  work_orders.json   the simulated MES: facts, status and readiness per work order (authoritative)
+  approvals.json     the simulated approval system (authoritative)
+  cases/*.json       one proposal each: the action plus what the caller claims (not authoritative)
+"""
 
 from __future__ import annotations
 
@@ -18,8 +24,13 @@ class Case:
     title: str
     description: str
     action: ProposedAction
-    evidence: EvidenceBundle
+    caller_evidence: EvidenceBundle  # what the proposing caller claims; never authoritative
     expected: dict[str, Any]
+
+    @property
+    def evidence(self) -> EvidenceBundle:
+        """Older name for caller_evidence, kept so the review tests run unmodified."""
+        return self.caller_evidence
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -34,6 +45,10 @@ def load_work_orders() -> dict[str, Any]:
     return _read(FIXTURES_DIR / "work_orders.json")
 
 
+def load_approvals() -> dict[str, Any]:
+    return _read(FIXTURES_DIR / "approvals.json")
+
+
 def load_case(path: Path) -> Case:
     d = _read(path)
     return Case(
@@ -41,7 +56,7 @@ def load_case(path: Path) -> Case:
         title=d["title"],
         description=d["description"],
         action=ProposedAction.from_dict(d["proposed_action"]),
-        evidence=EvidenceBundle.from_dict(d["evidence"]),
+        caller_evidence=EvidenceBundle.from_dict(d["caller_evidence"]),
         expected=d["expected"],
     )
 

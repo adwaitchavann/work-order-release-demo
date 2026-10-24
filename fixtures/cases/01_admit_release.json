@@ -13,7 +13,8 @@
     "part_revision": "C",
     "quantity": 400
   },
-  "evidence": {
+  "caller_evidence": {
+    "status": "PLANNED",
     "approvals": [
       {
         "approval_id": "APR-SYN-5001",

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .approval_registry import ApprovalRegistry
+from .authority import AuthoritativeSources
 from .clock import Clock, SystemClock
 from .demo_keys import DEMO_KEY_ID, DEMO_SECRET
 from .determiner import MockDeterminer
-from .evidence_registry import EvidenceRegistry
 from .executor import ReleaseExecutor
-from .fixtures import load_cases, load_policy, load_work_orders
+from .fixtures import load_approvals, load_policy, load_work_orders
 from .mes import SimulatedMES
 from .models import Policy
 from .signing import ReceiptSigner
@@ -22,9 +23,10 @@ class DemoEnvironment:
     policy: Policy
     signer: ReceiptSigner
     verifier: ReceiptVerifier
+    mes: SimulatedMES               # authoritative: work order facts, status, readiness
+    approvals: ApprovalRegistry     # authoritative: approvals
+    sources: AuthoritativeSources   # read-only view over both, shared by determiner and executor
     determiner: MockDeterminer
-    mes: SimulatedMES
-    evidence: EvidenceRegistry
     executor: ReleaseExecutor
 
     @classmethod
@@ -34,14 +36,16 @@ class DemoEnvironment:
         signer = ReceiptSigner(DEMO_KEY_ID, DEMO_SECRET)
         verifier = ReceiptVerifier({DEMO_KEY_ID: DEMO_SECRET})
         mes = SimulatedMES.from_fixture(load_work_orders())
-        evidence = EvidenceRegistry.from_cases(load_cases())
+        approvals = ApprovalRegistry.from_fixture(load_approvals())
+        sources = AuthoritativeSources(mes.reader(), approvals.reader())
         return cls(
             clock=clock,
             policy=policy,
             signer=signer,
             verifier=verifier,
-            determiner=MockDeterminer(policy, signer, clock, work_orders=mes.reader()),
             mes=mes,
-            evidence=evidence,
-            executor=ReleaseExecutor(mes, verifier, clock, active_policy=policy.ref(), evidence_source=evidence),
+            approvals=approvals,
+            sources=sources,
+            determiner=MockDeterminer(policy, signer, clock, sources=sources),
+            executor=ReleaseExecutor(mes, verifier, clock, active_policy=policy.ref(), evidence_source=sources),
         )

@@ -11,14 +11,14 @@ from wo_demo.fixtures import get_case
 def sign_receipt(env):
     """Sign a receipt directly, bypassing the determiner, the way buggy or hostile calling code might.
 
-    Bindings default to the correct values for the action, the evidence on record, the policy in force
+    Bindings default to the correct values for the action, the authoritative state, the policy in force
     and the MES record, so a test can change exactly one thing.
     """
 
     def sign(action, verdict="ADMIT", **overrides):
         now = env.clock.now()
         record = env.mes.lookup(action.work_order_id)
-        on_record = env.evidence.current(action.work_order_id)
+        on_record = env.sources.current(action.work_order_id)
         fields = dict(
             receipt_id=f"rcpt-direct-{verdict.lower()}-{action.work_order_id}-{action.quantity}",
             verdict=verdict,

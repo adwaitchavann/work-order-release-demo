@@ -1,9 +1,18 @@
 {
   "_note": "SYNTHETIC release policy for this demo. Not derived from any customer.",
-  "policy_version": "SYN-REL-POLICY-v3",
+  "policy_version": "SYN-REL-POLICY-v4",
   "base_approver_role": "PRODUCTION_SUPERVISOR",
-  "required_checks": ["bom_revision_confirmed", "material_available", "quality_hold_clear"],
-  "safety_critical_parts": ["PN-SYN-7730"],
+  "required_checks": [
+    "bom_revision_confirmed",
+    "material_available",
+    "quality_hold_clear"
+  ],
+  "safety_critical_parts": [
+    "PN-SYN-7730"
+  ],
   "safety_critical_approver_role": "QUALITY_ENGINEERING",
-  "receipt_ttl_seconds": 300
+  "receipt_ttl_seconds": 300,
+  "releasable_statuses": [
+    "PLANNED"
+  ]
 }

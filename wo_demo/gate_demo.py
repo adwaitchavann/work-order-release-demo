@@ -37,8 +37,8 @@ def run_gate_demo() -> tuple[list[GateStep], DemoEnvironment]:
     def attempt(label, action, receipt):
         steps.append(GateStep(label, env.executor.release(action, receipt)))
 
-    def admit(case, evidence=None):
-        return env.determiner.determine(case.action, evidence or case.evidence).receipt
+    def admit(case):
+        return env.determiner.determine(case.action, case.caller_evidence).receipt
 
     ok_receipt = admit(ok_case)
 
@@ -50,7 +50,7 @@ def run_gate_demo() -> tuple[list[GateStep], DemoEnvironment]:
 
     # B. Authenticity and freshness
     attempt("No receipt", ok_case.action, None)
-    halt = env.determiner.determine(halt_case.action, halt_case.evidence)
+    halt = env.determiner.determine(halt_case.action, halt_case.caller_evidence)
     attempt("HALT receipt edited to say ADMIT", halt_case.action, replace(halt.receipt, verdict="ADMIT"))
     now = clock.now()
     forged = ReceiptSigner("rogue-key", b"not-the-demo-key").sign(
@@ -73,20 +73,19 @@ def run_gate_demo() -> tuple[list[GateStep], DemoEnvironment]:
     attempt("ADMIT receipt used after quantity changed 400 -> 300",
             replace(ok_case.action, quantity=300), fresh)
     old_policy = replace(env.policy, version="SYN-REL-POLICY-v2")
-    old_determiner = MockDeterminer(old_policy, env.signer, clock, work_orders=env.mes.reader())
+    old_determiner = MockDeterminer(old_policy, env.signer, clock, sources=env.sources)
     attempt("ADMIT receipt issued under an older policy version", ok_case.action,
-            old_determiner.determine(ok_case.action, ok_case.evidence).receipt)
+            old_determiner.determine(ok_case.action, ok_case.caller_evidence).receipt)
 
     # D. Verdict
     attempt("HALT receipt, unmodified and fresh", halt_case.action, admit(halt_case))
 
-    # E. Currency
+    # E/F. Currency: the systems of record change after ADMIT
     reissued = admit(reissue_case)
-    revoked_again = replace(reissue_case.evidence, approvals=tuple(
-        replace(a, status="REVOKED", revoked_reason="line down")
-        if a.status == "ACTIVE" else a
-        for a in reissue_case.evidence.approvals))
-    env.evidence.record(reissue_case.action.work_order_id, revoked_again)
+    wo6 = reissue_case.action.work_order_id
+    on_record, _ = env.approvals.current(wo6)
+    env.approvals.record(wo6, tuple(replace(a, status="REVOKED", revoked_reason="line down")
+                                    if a.status == "ACTIVE" else a for a in on_record))
     attempt("Approval revoked after ADMIT, before release", reissue_case.action, reissued)
 
     a = refer_case.action
@@ -95,9 +94,9 @@ def run_gate_demo() -> tuple[list[GateStep], DemoEnvironment]:
         status="ACTIVE",
         scope=ApprovalScope(a.work_order_id, a.line, a.part_number, a.part_revision, a.quantity),
     )
-    with_qe = replace(refer_case.evidence, approvals=refer_case.evidence.approvals + (qe,))
-    env.evidence.record(a.work_order_id, with_qe)
-    signed_off = admit(refer_case, with_qe)
+    on_record, _ = env.approvals.current(a.work_order_id)
+    env.approvals.record(a.work_order_id, on_record + (qe,))
+    signed_off = admit(refer_case)
     env.mes.amend(a.work_order_id, part_revision="E")
     attempt("Part revision changed in the MES after ADMIT", a, signed_off)
 

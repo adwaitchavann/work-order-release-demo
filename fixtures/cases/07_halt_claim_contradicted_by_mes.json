@@ -1,0 +1,45 @@
+{
+  "case_id": "07_halt_claim_contradicted_by_mes",
+  "title": "Caller says releasable, MES has a quality hold -> HALT, no release",
+  "description": "SYNTHETIC. The agent claims the work order is PLANNED, fully ready and approved. The MES reports quality_hold_clear = false because QA placed a hold. The MES value decides, and the contradiction itself is a CLAIM_MISMATCH.",
+  "proposed_action": {
+    "action_id": "ACT-SYN-0007",
+    "agent_id": "SYN-PLANNING-AGENT",
+    "action_type": "RELEASE_WORK_ORDER",
+    "work_order_id": "WO-SYN-1007",
+    "plant": "PLANT-SYN-01",
+    "line": "LINE-2",
+    "part_number": "PN-SYN-6610",
+    "part_revision": "A",
+    "quantity": 150
+  },
+  "caller_evidence": {
+    "status": "PLANNED",
+    "approvals": [
+      {
+        "approval_id": "APR-SYN-5007",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-07",
+        "status": "ACTIVE",
+        "scope": {
+          "work_order_id": "WO-SYN-1007",
+          "line": "LINE-2",
+          "part_number": "PN-SYN-6610",
+          "part_revision": "A",
+          "max_quantity": 150
+        }
+      }
+    ],
+    "checks": {
+      "bom_revision_confirmed": true,
+      "material_available": true,
+      "quality_hold_clear": true
+    }
+  },
+  "expected": {
+    "verdict": "HALT",
+    "outcome": "REFUSED",
+    "cause": "VERDICT_NOT_ADMIT",
+    "work_order_status": "PLANNED"
+  }
+}

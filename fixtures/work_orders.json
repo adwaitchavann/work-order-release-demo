@@ -1,11 +1,123 @@
 {
-  "_note": "SYNTHETIC initial state for the simulated MES, the system of record for work order facts. Every identifier is invented.",
+  "_note": "SYNTHETIC simulated MES, the system of record for work order facts, status and readiness signals. A readiness signal that is missing means the MES has no reading for it. Every identifier is invented.",
   "work_orders": [
-    {"work_order_id": "WO-SYN-1001", "plant": "PLANT-SYN-01", "line": "LINE-2", "part_number": "PN-SYN-2210", "part_revision": "C", "planned_quantity": 400, "status": "PLANNED", "locked": false},
-    {"work_order_id": "WO-SYN-1002", "plant": "PLANT-SYN-01", "line": "LINE-2", "part_number": "PN-SYN-2210", "part_revision": "C", "planned_quantity": 250, "status": "PLANNED", "locked": true},
-    {"work_order_id": "WO-SYN-1003", "plant": "PLANT-SYN-01", "line": "LINE-1", "part_number": "PN-SYN-3105", "part_revision": "A", "planned_quantity": 120, "status": "PLANNED", "locked": false},
-    {"work_order_id": "WO-SYN-1004", "plant": "PLANT-SYN-01", "line": "LINE-3", "part_number": "PN-SYN-4480", "part_revision": "B", "planned_quantity": 600, "status": "PLANNED", "locked": false},
-    {"work_order_id": "WO-SYN-1005", "plant": "PLANT-SYN-01", "line": "LINE-1", "part_number": "PN-SYN-7730", "part_revision": "D", "planned_quantity": 80, "status": "PLANNED", "locked": false},
-    {"work_order_id": "WO-SYN-1006", "plant": "PLANT-SYN-01", "line": "LINE-3", "part_number": "PN-SYN-5120", "part_revision": "B", "planned_quantity": 300, "status": "PLANNED", "locked": false}
+    {
+      "work_order_id": "WO-SYN-1001",
+      "plant": "PLANT-SYN-01",
+      "line": "LINE-2",
+      "part_number": "PN-SYN-2210",
+      "part_revision": "C",
+      "planned_quantity": 400,
+      "status": "PLANNED",
+      "locked": false,
+      "readiness": {
+        "bom_revision_confirmed": true,
+        "material_available": true,
+        "quality_hold_clear": true
+      }
+    },
+    {
+      "work_order_id": "WO-SYN-1002",
+      "plant": "PLANT-SYN-01",
+      "line": "LINE-2",
+      "part_number": "PN-SYN-2210",
+      "part_revision": "C",
+      "planned_quantity": 250,
+      "status": "PLANNED",
+      "locked": true,
+      "readiness": {
+        "bom_revision_confirmed": true,
+        "material_available": true,
+        "quality_hold_clear": true
+      }
+    },
+    {
+      "work_order_id": "WO-SYN-1003",
+      "plant": "PLANT-SYN-01",
+      "line": "LINE-1",
+      "part_number": "PN-SYN-3105",
+      "part_revision": "A",
+      "planned_quantity": 120,
+      "status": "PLANNED",
+      "locked": false,
+      "readiness": {
+        "bom_revision_confirmed": true,
+        "material_available": true,
+        "quality_hold_clear": true
+      }
+    },
+    {
+      "work_order_id": "WO-SYN-1004",
+      "plant": "PLANT-SYN-01",
+      "line": "LINE-3",
+      "part_number": "PN-SYN-4480",
+      "part_revision": "B",
+      "planned_quantity": 600,
+      "status": "PLANNED",
+      "locked": false,
+      "readiness": {
+        "bom_revision_confirmed": true,
+        "material_available": true
+      }
+    },
+    {
+      "work_order_id": "WO-SYN-1005",
+      "plant": "PLANT-SYN-01",
+      "line": "LINE-1",
+      "part_number": "PN-SYN-7730",
+      "part_revision": "D",
+      "planned_quantity": 80,
+      "status": "PLANNED",
+      "locked": false,
+      "readiness": {
+        "bom_revision_confirmed": true,
+        "material_available": true,
+        "quality_hold_clear": true
+      }
+    },
+    {
+      "work_order_id": "WO-SYN-1006",
+      "plant": "PLANT-SYN-01",
+      "line": "LINE-3",
+      "part_number": "PN-SYN-5120",
+      "part_revision": "B",
+      "planned_quantity": 300,
+      "status": "PLANNED",
+      "locked": false,
+      "readiness": {
+        "bom_revision_confirmed": true,
+        "material_available": true,
+        "quality_hold_clear": true
+      }
+    },
+    {
+      "work_order_id": "WO-SYN-1007",
+      "plant": "PLANT-SYN-01",
+      "line": "LINE-2",
+      "part_number": "PN-SYN-6610",
+      "part_revision": "A",
+      "planned_quantity": 150,
+      "status": "PLANNED",
+      "locked": false,
+      "readiness": {
+        "bom_revision_confirmed": true,
+        "material_available": true,
+        "quality_hold_clear": false
+      }
+    },
+    {
+      "work_order_id": "WO-SYN-1008",
+      "plant": "PLANT-SYN-01",
+      "line": "LINE-1",
+      "part_number": "PN-SYN-8020",
+      "part_revision": "C",
+      "planned_quantity": 500,
+      "status": "PLANNED",
+      "locked": false,
+      "readiness": {
+        "bom_revision_confirmed": true,
+        "quality_hold_clear": true
+      }
+    }
   ]
 }

@@ -1,0 +1,45 @@
+{
+  "case_id": "08_defer_mes_state_missing",
+  "title": "Caller says material is available, MES has no reading -> DEFER, no release",
+  "description": "SYNTHETIC. The agent claims material_available = true. The MES has no material-availability reading for this work order yet. The caller's claim can't stand in for it, so the result is DEFER until the MES reports.",
+  "proposed_action": {
+    "action_id": "ACT-SYN-0008",
+    "agent_id": "SYN-PLANNING-AGENT",
+    "action_type": "RELEASE_WORK_ORDER",
+    "work_order_id": "WO-SYN-1008",
+    "plant": "PLANT-SYN-01",
+    "line": "LINE-1",
+    "part_number": "PN-SYN-8020",
+    "part_revision": "C",
+    "quantity": 500
+  },
+  "caller_evidence": {
+    "status": "PLANNED",
+    "approvals": [
+      {
+        "approval_id": "APR-SYN-5008",
+        "approver_role": "PRODUCTION_SUPERVISOR",
+        "approver_id": "SYN-SUP-11",
+        "status": "ACTIVE",
+        "scope": {
+          "work_order_id": "WO-SYN-1008",
+          "line": "LINE-1",
+          "part_number": "PN-SYN-8020",
+          "part_revision": "C",
+          "max_quantity": 500
+        }
+      }
+    ],
+    "checks": {
+      "bom_revision_confirmed": true,
+      "material_available": true,
+      "quality_hold_clear": true
+    }
+  },
+  "expected": {
+    "verdict": "DEFER",
+    "outcome": "REFUSED",
+    "cause": "VERDICT_NOT_ADMIT",
+    "work_order_status": "PLANNED"
+  }
+}
