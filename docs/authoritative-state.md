@@ -24,9 +24,12 @@ Verdict precedence is **HALT > REFER > DEFER > ADMIT**.
 2. The determiner builds one view from `AuthoritativeSources` and decides from it. The caller's claims are compared against that view.
 3. The receipt's existing `evidence_digest` field binds a digest of the view, including both versions. The MES facts digest is bound as before.
 4. The executor re-reads the same sources and refuses if anything the determination relied on has changed.
-5. The executor then asks the MES to release *on condition* that the work order is still at the MES version it just verified. The MES checks that version, checks for an active quality hold, and writes, all in one critical section.
+5. The executor claims the receipt in one atomic check-and-set, so only one request carrying it can go on.
+6. The executor then asks the MES to release *on condition* that the work order is still at the MES version it just verified. The MES checks that version, checks for an active quality hold, and writes, all in one critical section.
 
 **Consistency of the view.** The view comes from two sequential reads, the MES first and then the approval system. It is not a consistent cross-system snapshot: the two halves can describe slightly different moments. Any change after a source was read moves that source's version, so the executor's re-read still catches it. What isn't guaranteed is that the view as a whole existed at one instant.
+
+**Reads can't change the source.** Records the MES hands out are immutable copies. Readiness is a read-only mapping over a private deep copy, and every read (including through the read-only reader) returns a fresh copy, so editing a record a reader holds changes neither the MES nor its version. Before this, a reader could edit the readiness dict inside a record, clear a hold without the version moving, and the release went through. `tests/test_read_only_records.py` is the regression test.
 
 ## Who is authoritative for each input
 
@@ -66,6 +69,10 @@ The executor's last check is a read, and the release is a separate write. A QA h
 - **Outcome.** The executor reports FAILED with the MES error code. The receipt is already spent, so a retry needs a new determination, which would now HALT on the hold.
 - **Tests.** `tests/test_conditional_release.py` places a hold exactly in the window (between the executor's check and the MES write) and asserts no release, `STATE_CHANGED_BEFORE_RELEASE` and FAILED. It also covers a hold that lands without a version bump, and a hold attempted from another thread during the MES's own check-and-write. The race is also step 16–17 of `python -m wo_demo state`.
 
+## Single-use claim
+
+The executor's "not used" check (11) and marking the receipt used used to be separate steps, so two concurrent requests with the same receipt could both pass the check and both call the MES. Now `ConsumedReceipts.claim()` does the check and the mark in one atomic step, right before the MES call, and only one caller can win it. Check 11 stays as an early report. The losers are refused `RECEIPT_ALREADY_USED` and never reach the MES. `tests/test_atomic_claim.py` holds 2 and 8 concurrent requests until all have passed check 11 and asserts exactly one release and one MES call. The ledger is still in memory, so the claim is atomic within one process. A durable claim shared across processes is part of the separate receipt work.
+
 ## Decisions to confirm
 
 1. **Contradicting claims halt.** I extended the existing `FACT_MISMATCH` rule to status, readiness and approvals. The alternative is to ignore caller evidence completely, but then review test 1 would fail: it still sends `"FAIL"`, `0` and so on through the caller and expects no ADMIT. If you'd rather ignore claims outright, test 1 should set the MES value instead.
@@ -78,5 +85,5 @@ The executor's last check is a read, and the release is a separate write. A QA h
 
 - **Approval-revocation window.** Approvals live in a separate system, and the MES conditional write can't see them. An approval revoked after the executor's last check but before the MES write is not caught, and the release goes ahead. This is recorded as a strict expected failure (`test_approval_revoked_in_the_same_window_is_not_yet_caught`), so it shows up as soon as anyone closes it. Leases and cross-system approval coordination are deliberately left out of this iteration.
 - **No cross-system snapshot.** See "Consistency of the view" above.
-- **Receipt format and HMAC signing are unchanged.** Asymmetric signing and the production atomic claim are being handled separately.
+- **Receipt format and HMAC signing are unchanged.** The single-use claim is now atomic within the process. Asymmetric signing and a durable, cross-process ledger are being handled separately.
 - **Source outages aren't modeled.** If the MES or the approval system can't be reached, the result should be DEFER.

@@ -17,17 +17,21 @@ action and a receipt, it checks, in this order:
      9. same policy version and content                -> POLICY_VERSION_MISMATCH
   D. The determination permits execution
     10. the verdict is ADMIT                           -> VERDICT_NOT_ADMIT
-  E. Single use
-    11. the receipt has not been used                  -> RECEIPT_ALREADY_USED
+  E. Single use, early report
+    11. the receipt is not already in the ledger       -> RECEIPT_ALREADY_USED
   F. What the determination relied on is still true (re-read from the authoritative sources)
     12. the MES record's facts are unchanged           -> WORK_ORDER_CHANGED
     13. the authoritative view (MES status and
         readiness, approvals, and both versions)
         still matches evidence_digest                  -> EVIDENCE_NOT_CURRENT
 
-If every check passes, it marks the receipt consumed *before* calling the MES,
-so the receipt is spent whether the release then succeeds or fails. A retry
-needs a new determination.
+If every check passes, it claims the receipt: one atomic check-and-set on the
+ledger that marks it used and succeeds for exactly one caller. A request that
+loses the claim is refused (RECEIPT_ALREADY_USED) and never reaches the MES.
+Step 11 on its own is not a guarantee, because two concurrent requests can both
+pass it; the claim is. The claim comes right before the MES call, so the receipt
+is spent whether the release then succeeds or fails, and a request refused at
+any earlier step leaves it unspent. A retry needs a new determination.
 
   G. The MES write is conditional (see mes.py). The executor passes the MES
      version it verified in step 13. Inside one critical section the MES checks
@@ -50,6 +54,7 @@ no authoritative source) refuses rather than skipping the check.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -133,16 +138,29 @@ class ExecutionResult:
 
 
 class ConsumedReceipts:
-    """In-memory single-use ledger. A real system would persist this."""
+    """In-memory single-use ledger.
+
+    claim() is the only way to mark a receipt used, and it is one atomic check-and-set, so of any
+    number of concurrent claims for the same receipt exactly one succeeds. A real system would
+    persist the ledger and make the claim a conditional write in that store (for example an insert
+    that fails on a duplicate key), so it stays atomic across processes. That is out of scope here.
+    """
 
     def __init__(self) -> None:
         self._ids: set[str] = set()
+        self._lock = threading.Lock()
 
     def __contains__(self, receipt_id: str) -> bool:
-        return receipt_id in self._ids
+        with self._lock:
+            return receipt_id in self._ids
 
-    def mark(self, receipt_id: str) -> None:
-        self._ids.add(receipt_id)
+    def claim(self, receipt_id: str) -> bool:
+        """Marks the receipt used. True only for the first claim; False if it was already used."""
+        with self._lock:
+            if receipt_id in self._ids:
+                return False
+            self._ids.add(receipt_id)
+            return True
 
 
 class ReleaseExecutor:
@@ -170,7 +188,12 @@ class ReleaseExecutor:
             return self._result(action, receipt, ExecutionOutcome.REFUSED, detail, cause=cause)
 
         assert receipt is not None
-        self._consumed.mark(receipt.receipt_id)  # spent from here on, whatever happens next
+        # The claim: one atomic check-and-set, so exactly one request carrying this receipt gets past it.
+        # Step E only reports reuse early; two concurrent requests can both pass E, but only one wins here.
+        # The receipt is spent from here on, whatever happens next.
+        if not self._consumed.claim(receipt.receipt_id):
+            return self._result(action, receipt, ExecutionOutcome.REFUSED, f"{receipt.receipt_id} was already used",
+                                cause=RefusalCause.RECEIPT_ALREADY_USED)
         try:
             # G. Conditional write. The MES re-checks, atomically with the write, that the work order is still
             # at the version verified in F and has no active quality hold. A change that lands after F but
@@ -228,7 +251,7 @@ class ReleaseExecutor:
         if receipt.verdict != Verdict.ADMIT.value:
             return RefusalCause.VERDICT_NOT_ADMIT, f"receipt verdict is {receipt.verdict}; only ADMIT permits release"
 
-        # E. Single use.
+        # E. Single use, early report. Not the guarantee: that is the atomic claim in release().
         if receipt.receipt_id in self._consumed:
             return RefusalCause.RECEIPT_ALREADY_USED, f"{receipt.receipt_id} was already used"
 

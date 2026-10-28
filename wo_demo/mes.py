@@ -6,6 +6,12 @@ release-readiness signals. It knows nothing about verdicts or receipts.
 Every change to a determination input (facts, status, readiness) increases the
 work order's version. The session lock is execution state and does not.
 
+Read-only reads. The only way to change a work order is one of the change
+methods below, each of which moves the version. Records are immutable (readiness
+is a read-only mapping over a private copy), the MES copies every record it is
+given, and every read (lookup, snapshot, the reader) returns a fresh copy. So
+nothing done to a record a reader holds can change what the MES has.
+
 Conditional release. A release is accepted only if the work order is still at
 the version the caller expects, has no active quality hold, isn't locked by
 another session and is still PLANNED. Those checks and the write happen inside
@@ -41,7 +47,8 @@ class MESError(Exception):
 
 
 class WorkOrderReader:
-    """Read-only view of the MES, so a reader can look up work orders but not release or change them."""
+    """Read-only view of the MES, so a reader can look up work orders but not release or change them.
+    Each lookup returns a copy of the record."""
 
     def __init__(self, mes: "SimulatedMES") -> None:
         self._mes = mes
@@ -52,7 +59,7 @@ class WorkOrderReader:
 
 class SimulatedMES:
     def __init__(self, work_orders: Iterable[WorkOrderRecord]) -> None:
-        self._orders: dict[str, WorkOrderRecord] = {wo.work_order_id: wo for wo in work_orders}
+        self._orders: dict[str, WorkOrderRecord] = {wo.work_order_id: wo.copy() for wo in work_orders}
         self._lock = threading.RLock()
         self.call_log: list[dict[str, Any]] = []
         self.history: list[tuple[str, int, str]] = []  # (work order, version after the change, what changed)
@@ -66,9 +73,10 @@ class SimulatedMES:
     # -- reads -----------------------------------------------------------------
 
     def lookup(self, work_order_id: str) -> WorkOrderRecord | None:
-        """Records are frozen, so handing one out cannot change the MES."""
+        """A copy of the record. Nothing done to it can change the MES."""
         with self._lock:
-            return self._orders.get(work_order_id)
+            wo = self._orders.get(work_order_id)
+            return None if wo is None else wo.copy()
 
     def reader(self) -> WorkOrderReader:
         return WorkOrderReader(self)
@@ -79,7 +87,7 @@ class SimulatedMES:
 
     def snapshot(self) -> dict[str, WorkOrderRecord]:
         with self._lock:
-            return dict(self._orders)
+            return {wo_id: wo.copy() for wo_id, wo in self._orders.items()}
 
     # -- simulated changes made outside the demo's flow ------------------------
 
@@ -102,8 +110,9 @@ class SimulatedMES:
         self._change(work_order_id, f"status {status}", status=status)
 
     def set_readiness(self, work_order_id: str, readiness: Mapping[str, Any]) -> None:
-        """Replaces the work order's readiness signals. A signal left out (or None) is unknown to the MES."""
-        self._change(work_order_id, f"readiness {dict(readiness)}", readiness=dict(readiness))
+        """Replaces the work order's readiness signals. A signal left out (or None) is unknown to the MES.
+        The MES keeps its own copy, so the caller's mapping stays theirs."""
+        self._change(work_order_id, f"readiness {dict(readiness)}", readiness=readiness)
 
     def update_readiness(self, work_order_id: str, **signals: Any) -> None:
         """Changes some readiness signals, for example quality_hold_clear=False when QA places a hold."""
