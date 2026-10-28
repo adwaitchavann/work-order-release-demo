@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+import copy
+from dataclasses import asdict, dataclass, field, replace
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from .canonical import sha256_digest
@@ -25,6 +27,12 @@ def valid_release_quantity(quantity: Any, planned_quantity: Any) -> bool:
         and is_whole_number(planned_quantity)
         and 0 < quantity <= planned_quantity
     )
+
+
+def read_only_mapping(m: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    """A read-only view over a private deep copy: edits through it fail, and nothing in it is shared
+    with the mapping it was made from."""
+    return MappingProxyType(copy.deepcopy(dict(m or {})))
 
 
 @dataclass(frozen=True)
@@ -66,6 +74,11 @@ class WorkOrderRecord:
     clear). `version` increases on every change to any of those, so a receipt can tell
     "changed and changed back" apart from "never changed". `locked` is a transient MES
     session lock: execution state, not a determination input, and it does not bump the version.
+
+    Read-only. `frozen` stops fields being reassigned but not a dict inside one being edited, so
+    readiness is stored as a read-only mapping over a private deep copy, made every time a record
+    is built (including by dataclasses.replace). The MES also hands out a copy on every read, so
+    even a forced edit to a returned record can't reach the MES.
     """
 
     work_order_id: str
@@ -78,6 +91,13 @@ class WorkOrderRecord:
     locked: bool = False
     readiness: Mapping[str, Any] = field(default_factory=dict, hash=False)
     version: int = 1
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "readiness", read_only_mapping(self.readiness))
+
+    def copy(self) -> "WorkOrderRecord":
+        """An equal record that shares nothing mutable with this one."""
+        return replace(self)
 
     def facts(self) -> dict[str, Any]:
         """The facts a determination relies on. Status and lock state are execution state, not facts."""
@@ -104,7 +124,7 @@ class WorkOrderRecord:
             planned_quantity=d["planned_quantity"],
             status=d.get("status"),
             locked=bool(d.get("locked", False)),
-            readiness=dict(d.get("readiness") or {}),
+            readiness=d.get("readiness") or {},
         )
 
 
