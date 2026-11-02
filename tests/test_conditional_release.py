@@ -55,7 +55,7 @@ def test_hold_placed_between_the_executors_check_and_the_mes_write_blocks_the_re
     assert result.work_order_status == "PLANNED"
     assert env.mes.status(WO) == "PLANNED"
     assert len(env.mes.call_log) == 1                 # the attempt reached the MES
-    assert "released" not in _changes(env)            # but only the hold was applied
+    assert not any(c.startswith("released") for c in _changes(env))  # but only the hold was applied
 
 
 def test_executor_makes_the_release_conditional_on_the_version_it_verified(env, admit_case):
@@ -157,7 +157,7 @@ def test_a_hold_arriving_during_the_mes_check_and_write_waits_for_the_write(env,
 
     assert waited == [True]
     assert result.outcome is RELEASED
-    assert _changes(env)[-2:] == ["released", "readiness {'quality_hold_clear': False}"]
+    assert _changes(env)[-2:] == ["released 400", "readiness {'quality_hold_clear': False}"]
     assert env.mes.status(WO) == "RELEASED"
     assert env.mes.lookup(WO).readiness["quality_hold_clear"] is False
 

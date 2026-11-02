@@ -29,6 +29,7 @@ class CaseRun:
     mes_calls: int
     authoritative: dict[str, Any] | None   # the view as the determiner read it
     record_facts: dict[str, Any] | None
+    released_quantity: int | None = None    # what the MES recorded as released (full quantity only)
 
     def trace(self) -> dict[str, Any]:
         return {
@@ -44,7 +45,8 @@ class CaseRun:
                  "caller_claims": {"authoritative": False, "data": self.case.caller_evidence.to_dict()}},
                 {"stage": "3_determination", "data": self.determination.to_dict()},
                 {"stage": "4_effect", "status_before": self.status_before,
-                 "mes_calls": self.mes_calls, "data": self.effect.to_dict()},
+                 "mes_calls": self.mes_calls, "released_quantity": self.released_quantity,
+                 "data": self.effect.to_dict()},
             ],
         }
 
@@ -60,6 +62,8 @@ def run_case(case: Case, clock: Clock | None = None) -> CaseRun:
     # Stage 4: do. The executor gets only the action and the receipt.
     effect = env.executor.release(case.action, determination.receipt)
 
+    after = env.mes.lookup(case.action.work_order_id)
     return CaseRun(case, determination, effect, status_before, len(env.mes.call_log),
                    view.to_dict() if view is not None else None,
-                   view.record.facts() if view is not None else None)
+                   view.record.facts() if view is not None else None,
+                   after.released_quantity if after is not None else None)

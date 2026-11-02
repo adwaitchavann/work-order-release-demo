@@ -13,8 +13,10 @@ given, and every read (lookup, snapshot, the reader) returns a fresh copy. So
 nothing done to a record a reader holds can change what the MES has.
 
 Conditional release. A release is accepted only if the work order is still at
-the version the caller expects, has no active quality hold, isn't locked by
-another session and is still PLANNED. Those checks and the write happen inside
+the version the caller expects, is requested for its full planned quantity,
+has no active quality hold, isn't locked by another session and is still
+PLANNED. The release records the quantity released (always the full planned
+quantity; this demo doesn't support partial releases). Those checks and the write happen inside
 one critical section that every other change also has to take, so nothing can
 land between the check and the write. A hold that arrives first makes the
 release fail; a hold that arrives after the release committed lands on a
@@ -36,7 +38,7 @@ import threading
 from dataclasses import replace
 from typing import Any, Callable, Iterable, Mapping
 
-from .models import FACT_FIELDS, WorkOrderRecord
+from .models import FACT_FIELDS, WorkOrderRecord, valid_release_quantity
 
 
 class MESError(Exception):
@@ -127,9 +129,9 @@ class SimulatedMES:
 
     # -- the one write the executor uses ---------------------------------------
 
-    def release(self, work_order_id: str, quantity: int | None = None, *,
-                expected_version: int | None = None) -> None:
-        """Conditional release. Checks and write are atomic with respect to every other change."""
+    def release(self, work_order_id: str, quantity: Any, *, expected_version: int | None = None) -> None:
+        """Conditional release. Checks and write are atomic with respect to every other change.
+        Full quantity only: the MES releases the whole planned quantity or nothing, and records it."""
         self.call_log.append({"call": "release", "work_order_id": work_order_id, "quantity": quantity,
                               "expected_version": expected_version})
         if self.before_release_hook is not None:
@@ -145,6 +147,10 @@ class SimulatedMES:
                 raise MESError("STATE_CHANGED_BEFORE_RELEASE",
                                f"{work_order_id} is at version {wo.version}; the release was conditional on "
                                f"version {expected_version}")
+            if not valid_release_quantity(quantity, wo.planned_quantity):
+                raise MESError("FULL_QUANTITY_REQUIRED",
+                               f"{work_order_id} can only be released in full ({wo.planned_quantity}); "
+                               f"requested {quantity!r}")
             if wo.readiness.get("quality_hold_clear") is not True:
                 raise MESError("QUALITY_HOLD_ACTIVE",
                                f"{work_order_id} has an active or unconfirmed quality hold")
@@ -156,4 +162,4 @@ class SimulatedMES:
             if self.inside_release_hook is not None:
                 self.inside_release_hook(work_order_id)
 
-            self._change(work_order_id, "released", status="RELEASED")
+            self._change(work_order_id, f"released {quantity}", status="RELEASED", released_quantity=quantity)

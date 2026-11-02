@@ -21,11 +21,14 @@ def is_whole_number(value: Any) -> bool:
 
 
 def valid_release_quantity(quantity: Any, planned_quantity: Any) -> bool:
-    """A release quantity must be a whole number from 1 up to the planned quantity on the MES record."""
+    """This demo releases whole work orders only: the quantity must be exactly the planned quantity on
+    the MES record. Partial releases are rejected, because the demo doesn't track how much of an order
+    has been released. The determiner, the executor and the MES write all apply this rule."""
     return (
         is_whole_number(quantity)
         and is_whole_number(planned_quantity)
-        and 0 < quantity <= planned_quantity
+        and planned_quantity > 0
+        and quantity == planned_quantity
     )
 
 
@@ -91,6 +94,7 @@ class WorkOrderRecord:
     locked: bool = False
     readiness: Mapping[str, Any] = field(default_factory=dict, hash=False)
     version: int = 1
+    released_quantity: int | None = None  # set by the MES when it releases the order; always the full quantity
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "readiness", read_only_mapping(self.readiness))
@@ -125,6 +129,7 @@ class WorkOrderRecord:
             status=d.get("status"),
             locked=bool(d.get("locked", False)),
             readiness=d.get("readiness") or {},
+            released_quantity=d.get("released_quantity"),
         )
 
 

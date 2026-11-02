@@ -91,6 +91,9 @@ def render(run: CaseRun) -> str:
     out.append(f"    {e.detail}")
     out.append(f"    work order {e.work_order_id}: {run.status_before} -> {e.work_order_status}"
                f"   (MES calls: {run.mes_calls})")
+    if run.released_quantity is not None and run.record_facts is not None:
+        out.append(f"    released quantity recorded by the MES: {run.released_quantity} of "
+                   f"{run.record_facts['planned_quantity']} (full order)")
     if e.outcome is ExecutionOutcome.FAILED:
         out.append("    note: ADMIT permitted the attempt; the attempt itself failed. Receipt is now spent.")
     return "\n".join(out)

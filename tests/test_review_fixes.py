@@ -172,11 +172,13 @@ def test_unknown_work_order_is_halted_and_refused(env, admit_case, sign_receipt,
     assert_mes_untouched()
 
 
-def test_partial_quantity_within_plan_and_approval_is_released(env, admit_case):
+def test_partial_quantity_within_plan_and_approval_is_not_released(env, admit_case):
+    """Full quantity only in this demo (see test_full_quantity_release.py)."""
     action = replace(admit_case.action, quantity=250)
     d, result = _decide_and_release(env, admit_case, admit_case.evidence, action=action)
-    assert d.verdict is Verdict.ADMIT
-    assert result.outcome is RELEASED
+    assert d.verdict is Verdict.HALT
+    assert "QUANTITY_INVALID" in _codes(d)
+    assert result.outcome is not RELEASED
 
 
 def test_executor_checks_quantity_against_the_current_plan(env, admit_case, assert_mes_untouched):

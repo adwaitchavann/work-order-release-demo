@@ -6,7 +6,8 @@ action and a receipt, it checks, in this order:
   A. The request, judged against the MES record (no receipt needed)
      1. the action type is RELEASE_WORK_ORDER          -> ACTION_TYPE_INVALID
      2. the work order exists in the MES               -> WORK_ORDER_UNKNOWN
-     3. quantity is a whole number, 1..planned         -> QUANTITY_INVALID
+     3. quantity is the full planned quantity
+        (partial releases aren't supported)           -> QUANTITY_INVALID
   B. The receipt is authentic and current, before anything on it is read
      4. a receipt is present                           -> RECEIPT_MISSING
      5. the signature is valid and the key is known    -> SIGNATURE_INVALID
@@ -216,8 +217,8 @@ class ReleaseExecutor:
             return RefusalCause.WORK_ORDER_UNKNOWN, f"{action.work_order_id} is not in the MES"
         if not valid_release_quantity(action.quantity, record.planned_quantity):
             return (RefusalCause.QUANTITY_INVALID,
-                    f"quantity {action.quantity!r} must be a whole number from 1 to the planned "
-                    f"{record.planned_quantity} on the MES record")
+                    f"quantity {action.quantity!r} must be the full planned quantity "
+                    f"{record.planned_quantity} on the MES record; partial releases aren't supported")
 
         # B. Authenticity and freshness, before any field on the receipt is trusted.
         if receipt is None:

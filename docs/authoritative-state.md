@@ -87,3 +87,5 @@ The executor's "not used" check (11) and marking the receipt used used to be sep
 - **No cross-system snapshot.** See "Consistency of the view" above.
 - **Receipt format and HMAC signing are unchanged.** The single-use claim is now atomic within the process. Asymmetric signing and a durable, cross-process ledger are being handled separately.
 - **Source outages aren't modeled.** If the MES or the approval system can't be reached, the result should be DEFER.
+- **Whole orders only.** The determiner, the executor and the MES write each reject any quantity other than the full planned quantity, and the MES records what it released. Partial releases are out of scope.
+- **"Only the executor can release" is the architecture, not enforced isolation.** Keeping a real agent away from a real MES needs deployment controls (credentials and network access held only by the executor).

@@ -6,7 +6,7 @@ An AI planning agent proposes releasing a manufacturing work order. Each proposa
 
 **proposed action → evidence → determination → effect**
 
-Deciding and doing are separate. The mock determiner decides and issues a signed receipt. A separate executor, the only component that can release a work order, verifies that receipt itself before acting. **ADMIT permits the executor to attempt the release; it does not mean the release succeeded.** The executor reports its own outcome: `RELEASED`, `FAILED` or `REFUSED`.
+Deciding and doing are separate. The mock determiner decides and issues a signed receipt. A separate executor, the only component in this demo that can release a work order, verifies that receipt itself before acting. That's the intended architecture; keeping a real agent away from a real MES takes deployment controls this local demo doesn't provide (see Limitations). **ADMIT permits the executor to attempt the release; it does not mean the release succeeded.** The executor reports its own outcome: `RELEASED`, `FAILED` or `REFUSED`.
 
 **The caller is not authoritative for evidence.** The determination reads the work order's facts, status and readiness from the MES, and its approvals from the approval system. Anything the caller says about those is a claim. Caller claims cannot establish admissibility; contradictions may independently cause HALT. See [docs/authoritative-state.md](docs/authoritative-state.md).
 
@@ -15,6 +15,8 @@ Deciding and doing are separate. The mock determiner decides and issues a signed
 **Reads are read-only.** Records handed out by the MES are immutable copies, so editing one (its readiness signals included) can't change the MES or let a release through.
 
 **A receipt is claimed atomically.** Marking a receipt used is one check-and-set, so of any number of concurrent requests carrying the same receipt, exactly one reaches the MES.
+
+**Whole orders only.** A release must be for the work order's full planned quantity. The determiner halts, the executor refuses and the MES write rejects anything else, and the MES records the quantity it released.
 
 Verdict precedence is **HALT > REFER > DEFER > ADMIT**.
 
@@ -39,12 +41,13 @@ python -m wo_demo run --json out/trace.json            # also write a JSON trace
 python -m wo_demo state                                # authoritative state changing between proposals
 python -m wo_demo gate                                 # the executor refusing misuse (17 steps)
 python -m wo_demo list                                 # list the cases
-python -m pytest -v                                    # 277 tests, plus 1 expected failure (see below)
+python -m pytest -v                                    # 295 tests, plus 1 expected failure (see below)
 python -m pytest tests/test_review_gaps.py -v          # the 11 review regression tests
 python -m pytest tests/test_authoritative_state.py -v  # the authoritative-state scenarios
 python -m pytest tests/test_conditional_release.py -v  # the MES race and atomicity tests
 python -m pytest tests/test_read_only_records.py -v    # records edited through the reader can't change the MES
 python -m pytest tests/test_atomic_claim.py -v         # concurrent requests with one receipt release once
+python -m pytest tests/test_full_quantity_release.py -v  # partial releases are rejected at every layer
 ```
 
 ## Fixtures
@@ -99,7 +102,7 @@ The determiner and the executor both read through `AuthoritativeSources`, a read
 
 The verdicts are the four core verdicts, unchanged (`verdicts.py`). The rules are evaluated on the authoritative view:
 
-- **HALT**: invalid request (action type, unknown work order, quantity not a whole number from 1 to the planned quantity); proposal facts or caller claims that contradict the record; a status the policy doesn't list as releasable; a revoked approval with nothing else in force covering the action; no approval in force covers the record's line, part, revision and quantity; an unrecognized approval status; a readiness check that is `false`.
+- **HALT**: invalid request (action type, unknown work order, or a quantity other than the full planned quantity: partial releases aren't supported); proposal facts or caller claims that contradict the record; a status the policy doesn't list as releasable; a revoked approval with nothing else in force covering the action; no approval in force covers the record's line, part, revision and quantity; an unrecognized approval status; a readiness check that is `false`.
 - **REFER**: the part on the MES record is safety-critical and Quality Engineering hasn't signed off in the approval system.
 - **DEFER**: required state is missing or unusable: no status reported, no supervisor approval in the approval system, or a readiness check that is absent, `null` or not a boolean.
 - **ADMIT**: none of the above.
@@ -124,7 +127,7 @@ The executor receives the action and the receipt, never the determination, and c
 |---|---|---|---|
 | 1 | Request | Action type is `RELEASE_WORK_ORDER` | `ACTION_TYPE_INVALID` |
 | 2 | | Work order exists in the MES | `WORK_ORDER_UNKNOWN` |
-| 3 | | Quantity is a whole number from 1 to the planned quantity (re-read from the MES) | `QUANTITY_INVALID` |
+| 3 | | Quantity is the full planned quantity (re-read from the MES); partial releases aren't supported | `QUANTITY_INVALID` |
 | 4 | Authenticity | A receipt is present | `RECEIPT_MISSING` |
 | 5 | | Signature valid, key known | `SIGNATURE_INVALID` |
 | 6 | | Not expired (unreadable expiry counts as expired) | `RECEIPT_EXPIRED` |
@@ -152,11 +155,12 @@ The executor's last check is a read; the release is a separate write. To stop a 
 |---|---|
 | The release names an expected version | `PRECONDITION_REQUIRED` |
 | The work order is still at that version | `STATE_CHANGED_BEFORE_RELEASE` |
+| The quantity is the full planned quantity on the MES's own record | `FULL_QUANTITY_REQUIRED` |
 | `quality_hold_clear` is exactly true (an unconfirmed hold counts as active) | `QUALITY_HOLD_ACTIVE` |
 | Not locked by another MES session | `WORK_ORDER_LOCKED` |
 | Status is still `PLANNED` | `INVALID_STATUS` |
 
-A QA hold placed after the executor's check makes the release fail with `STATE_CHANGED_BEFORE_RELEASE`. A hold that lands without moving the version (a version-tracking bug) is still stopped by the hold check. A hold that arrives while the MES is between its checks and its write waits for the write, and then lands on a released order. The receipt is spent, so a retry needs a new determination, which would HALT on the hold.
+A successful release records `released_quantity` on the work order, which is always the full planned quantity. A QA hold placed after the executor's check makes the release fail with `STATE_CHANGED_BEFORE_RELEASE`. A hold that lands without moving the version (a version-tracking bug) is still stopped by the hold check. A hold that arrives while the MES is between its checks and its write waits for the write, and then lands on a released order. The receipt is spent, so a retry needs a new determination, which would HALT on the hold.
 
 **Unresolved: the approval-revocation window.** Approvals live in a separate system the MES can't see. An approval revoked after the executor's last check but before the MES write is not caught; the release goes ahead. `test_approval_revoked_in_the_same_window_is_not_yet_caught` records this as a strict expected failure. Leases and cross-system approval coordination are out of scope for this iteration.
 
@@ -167,6 +171,7 @@ A QA hold placed after the executor's check makes the release fail with `STATE_C
 - `tests/test_conditional_release.py`: the race (a hold placed between the executor's check and the MES write), other changes in the same window, the hold check without a version bump, unconditional and stale releases, a concurrent hold during the MES's own check-and-write, and the approval-revocation window as a strict expected failure.
 - `tests/test_read_only_records.py`: editing a record through the reader (and forcing an edit onto a returned record) can't clear a hold or let a release through; reads return fresh copies, nested values included; mappings handed to the MES are copied.
 - `tests/test_atomic_claim.py`: concurrent requests with one receipt release exactly once, including when the one attempt fails; the claim under contention; a refusal before the claim leaves the receipt unspent.
+- `tests/test_full_quantity_release.py`: 1 unit of a 400-unit order is not released; the determiner, the executor (even with a valid ADMIT receipt) and the MES write each reject partial quantities on their own; a full release records the released quantity.
 - `tests/test_review_fixes.py`: the earlier review fixes, tested against authoritative state.
 - `tests/test_executor_gate.py`, `tests/test_determiner.py`, `tests/test_pipeline.py`, `tests/test_structure.py`: the gate, the rules, the end-to-end runs and demos, and the import and read-only boundaries.
 
@@ -180,7 +185,7 @@ Every check was also verified by disabling it in a scratch copy and confirming t
 - **Releasable status** is `PLANNED` (policy). Missing status is DEFER; any other status is HALT.
 - **Unknown work order** is HALT, not DEFER.
 - **Non-boolean readiness values** from the MES are DEFER (unusable), not HALT.
-- **Partial releases** are allowed: any whole quantity from 1 up to the planned quantity, within the approval's `max_quantity`.
+- **Whole orders only.** A release must be for the full planned quantity on the MES record, within the approval's `max_quantity`. Partial releases would need the MES to track released and remaining quantities, which this demo doesn't do.
 - **Single use.** A receipt is spent by the first request that passes every check and wins the claim, whether the release then succeeds or fails.
 - **Freshness.** A receipt is expired at exactly its expiry time; TTL is 300 seconds.
 
@@ -192,6 +197,8 @@ Every check was also verified by disabling it in a scratch copy and confirming t
 - **The consumed-receipt ledger is in memory.** The claim is atomic within one process (a lock). Production needs the claim as a conditional write in a durable, shared store, so it holds across processes and restarts; planned separately.
 - **Source outages aren't modeled.** If the MES or the approval system can't be reached, the result should be DEFER (and a refusal at the executor). Easy to add.
 - **Per-approval revocation** (see the trade-off above).
+- **"Only the executor can release" is the intended architecture, not enforced isolation.** In the demo the agent is only a proposal, the determiner gets read-only readers, and the executor is the only component wired to the MES's release. Everything runs in one Python process, though, so nothing stops other code from calling the MES directly. A real deployment needs controls outside this code: MES credentials and network access held only by the executor, so an agent can't call the MES itself.
+- **No partial releases** (see Assumptions).
 - No real MES or ERP integration, no authentication, no network calls, and no clock-skew or not-before handling.
 
 ## Layout
@@ -215,6 +222,8 @@ wo_demo/
   cli.py                command line
 docs/
   authoritative-state.md  data flow and who is authoritative for what
+  walkthrough.md          5-minute walkthrough script for a manufacturing audience
+  mes-conditional-writes.md  real MES systems and whether they document conditional writes
 fixtures/               synthetic MES, approval system, policy and cases
 tests/                  pytest suite, including the review regression tests
 ```
