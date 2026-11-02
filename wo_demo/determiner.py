@@ -18,7 +18,8 @@ Where its inputs come from (see authority.py):
     so it never fills in missing state.
 
 Rules (synthetic), all evaluated on the authoritative view:
-  HALT  - invalid request (action type, unknown work order, quantity); proposal facts
+  HALT  - invalid request (action type, unknown work order, or a quantity other than the
+          full planned quantity: partial releases aren't supported); proposal facts
           or caller claims that contradict the record; a status that isn't releasable;
           a revoked approval with nothing else in force covering the action; no
           approval in force covers the record's facts and quantity; an unrecognized
@@ -240,8 +241,8 @@ class MockDeterminer:
 
         if not valid_release_quantity(action.quantity, record.planned_quantity):
             findings.add(Verdict.HALT, "QUANTITY_INVALID",
-                         f"quantity {action.quantity!r} must be a whole number from 1 to the planned "
-                         f"{record.planned_quantity} on the MES record")
+                         f"quantity {action.quantity!r} must be the full planned quantity "
+                         f"{record.planned_quantity} on the MES record; partial releases aren't supported")
 
         mismatched = False
         for name in FACT_FIELDS:

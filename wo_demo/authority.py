@@ -30,6 +30,7 @@ instant.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -85,7 +86,9 @@ class AuthoritativeSources:
         if record is None:
             return None
         approvals, approvals_version = self._approvals.current(work_order_id)
-        evidence = EvidenceBundle(approvals=approvals, checks=dict(record.readiness), status=record.status)
+        # record is the MES's copy, read-only; checks is this view's own copy of its readiness.
+        evidence = EvidenceBundle(approvals=approvals, checks=copy.deepcopy(dict(record.readiness)),
+                                  status=record.status)
         return AuthoritativeView(record=record, evidence=evidence, approvals_version=approvals_version)
 
 

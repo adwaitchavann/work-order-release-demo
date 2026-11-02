@@ -6,9 +6,17 @@ release-readiness signals. It knows nothing about verdicts or receipts.
 Every change to a determination input (facts, status, readiness) increases the
 work order's version. The session lock is execution state and does not.
 
+Read-only reads. The only way to change a work order is one of the change
+methods below, each of which moves the version. Records are immutable (readiness
+is a read-only mapping over a private copy), the MES copies every record it is
+given, and every read (lookup, snapshot, the reader) returns a fresh copy. So
+nothing done to a record a reader holds can change what the MES has.
+
 Conditional release. A release is accepted only if the work order is still at
-the version the caller expects, has no active quality hold, isn't locked by
-another session and is still PLANNED. Those checks and the write happen inside
+the version the caller expects, is requested for its full planned quantity,
+has no active quality hold, isn't locked by another session and is still
+PLANNED. The release records the quantity released (always the full planned
+quantity; this demo doesn't support partial releases). Those checks and the write happen inside
 one critical section that every other change also has to take, so nothing can
 land between the check and the write. A hold that arrives first makes the
 release fail; a hold that arrives after the release committed lands on a
@@ -30,7 +38,7 @@ import threading
 from dataclasses import replace
 from typing import Any, Callable, Iterable, Mapping
 
-from .models import FACT_FIELDS, WorkOrderRecord
+from .models import FACT_FIELDS, WorkOrderRecord, valid_release_quantity
 
 
 class MESError(Exception):
@@ -41,7 +49,8 @@ class MESError(Exception):
 
 
 class WorkOrderReader:
-    """Read-only view of the MES, so a reader can look up work orders but not release or change them."""
+    """Read-only view of the MES, so a reader can look up work orders but not release or change them.
+    Each lookup returns a copy of the record."""
 
     def __init__(self, mes: "SimulatedMES") -> None:
         self._mes = mes
@@ -52,7 +61,7 @@ class WorkOrderReader:
 
 class SimulatedMES:
     def __init__(self, work_orders: Iterable[WorkOrderRecord]) -> None:
-        self._orders: dict[str, WorkOrderRecord] = {wo.work_order_id: wo for wo in work_orders}
+        self._orders: dict[str, WorkOrderRecord] = {wo.work_order_id: wo.copy() for wo in work_orders}
         self._lock = threading.RLock()
         self.call_log: list[dict[str, Any]] = []
         self.history: list[tuple[str, int, str]] = []  # (work order, version after the change, what changed)
@@ -66,9 +75,10 @@ class SimulatedMES:
     # -- reads -----------------------------------------------------------------
 
     def lookup(self, work_order_id: str) -> WorkOrderRecord | None:
-        """Records are frozen, so handing one out cannot change the MES."""
+        """A copy of the record. Nothing done to it can change the MES."""
         with self._lock:
-            return self._orders.get(work_order_id)
+            wo = self._orders.get(work_order_id)
+            return None if wo is None else wo.copy()
 
     def reader(self) -> WorkOrderReader:
         return WorkOrderReader(self)
@@ -79,7 +89,7 @@ class SimulatedMES:
 
     def snapshot(self) -> dict[str, WorkOrderRecord]:
         with self._lock:
-            return dict(self._orders)
+            return {wo_id: wo.copy() for wo_id, wo in self._orders.items()}
 
     # -- simulated changes made outside the demo's flow ------------------------
 
@@ -102,8 +112,9 @@ class SimulatedMES:
         self._change(work_order_id, f"status {status}", status=status)
 
     def set_readiness(self, work_order_id: str, readiness: Mapping[str, Any]) -> None:
-        """Replaces the work order's readiness signals. A signal left out (or None) is unknown to the MES."""
-        self._change(work_order_id, f"readiness {dict(readiness)}", readiness=dict(readiness))
+        """Replaces the work order's readiness signals. A signal left out (or None) is unknown to the MES.
+        The MES keeps its own copy, so the caller's mapping stays theirs."""
+        self._change(work_order_id, f"readiness {dict(readiness)}", readiness=readiness)
 
     def update_readiness(self, work_order_id: str, **signals: Any) -> None:
         """Changes some readiness signals, for example quality_hold_clear=False when QA places a hold."""
@@ -118,9 +129,9 @@ class SimulatedMES:
 
     # -- the one write the executor uses ---------------------------------------
 
-    def release(self, work_order_id: str, quantity: int | None = None, *,
-                expected_version: int | None = None) -> None:
-        """Conditional release. Checks and write are atomic with respect to every other change."""
+    def release(self, work_order_id: str, quantity: Any, *, expected_version: int | None = None) -> None:
+        """Conditional release. Checks and write are atomic with respect to every other change.
+        Full quantity only: the MES releases the whole planned quantity or nothing, and records it."""
         self.call_log.append({"call": "release", "work_order_id": work_order_id, "quantity": quantity,
                               "expected_version": expected_version})
         if self.before_release_hook is not None:
@@ -136,6 +147,10 @@ class SimulatedMES:
                 raise MESError("STATE_CHANGED_BEFORE_RELEASE",
                                f"{work_order_id} is at version {wo.version}; the release was conditional on "
                                f"version {expected_version}")
+            if not valid_release_quantity(quantity, wo.planned_quantity):
+                raise MESError("FULL_QUANTITY_REQUIRED",
+                               f"{work_order_id} can only be released in full ({wo.planned_quantity}); "
+                               f"requested {quantity!r}")
             if wo.readiness.get("quality_hold_clear") is not True:
                 raise MESError("QUALITY_HOLD_ACTIVE",
                                f"{work_order_id} has an active or unconfirmed quality hold")
@@ -147,4 +162,4 @@ class SimulatedMES:
             if self.inside_release_hook is not None:
                 self.inside_release_hook(work_order_id)
 
-            self._change(work_order_id, "released", status="RELEASED")
+            self._change(work_order_id, f"released {quantity}", status="RELEASED", released_quantity=quantity)

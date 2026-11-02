@@ -45,8 +45,8 @@ def run_gate_demo() -> tuple[list[GateStep], DemoEnvironment]:
     # A. The request itself
     attempt("Action type changed to CLOSE_WORK_ORDER",
             replace(ok_case.action, action_type="CLOSE_WORK_ORDER"), ok_receipt)
-    attempt("Quantity 401 on a work order planned for 400",
-            replace(ok_case.action, quantity=401), ok_receipt)
+    attempt("Partial release: 1 unit of a work order planned for 400",
+            replace(ok_case.action, quantity=1), ok_receipt)
 
     # B. Authenticity and freshness
     attempt("No receipt", ok_case.action, None)
@@ -70,8 +70,8 @@ def run_gate_demo() -> tuple[list[GateStep], DemoEnvironment]:
     fresh = admit(ok_case)
     attempt(f"ADMIT receipt for {ok_case.action.work_order_id} used on {halt_case.action.work_order_id}",
             halt_case.action, fresh)
-    attempt("ADMIT receipt used after quantity changed 400 -> 300",
-            replace(ok_case.action, quantity=300), fresh)
+    attempt("ADMIT receipt presented with another agent's proposal",
+            replace(ok_case.action, agent_id="SYN-OTHER-AGENT"), fresh)
     old_policy = replace(env.policy, version="SYN-REL-POLICY-v2")
     old_determiner = MockDeterminer(old_policy, env.signer, clock, sources=env.sources)
     attempt("ADMIT receipt issued under an older policy version", ok_case.action,

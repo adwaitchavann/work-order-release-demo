@@ -147,7 +147,7 @@ def test_receipt_issued_for_a_different_work_order_is_refused(env, admit_case, h
 
 
 @pytest.mark.parametrize("change", [
-    {"quantity": 300},  # still a valid quantity, so only the binding can catch it
+    {"action_id": "ACT-SYN-9999"},  # every request check still passes, so only the binding can catch it
     {"line": "LINE-3"},
     {"part_revision": "D"},
     {"agent_id": "SYN-OTHER-AGENT"},
