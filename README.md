@@ -162,7 +162,7 @@ The executor's last check is a read; the release is a separate write. To stop a 
 
 A successful release records `released_quantity` on the work order, which is always the full planned quantity. A QA hold placed after the executor's check makes the release fail with `STATE_CHANGED_BEFORE_RELEASE`. A hold that lands without moving the version (a version-tracking bug) is still stopped by the hold check. A hold that arrives while the MES is between its checks and its write waits for the write, and then lands on a released order. The receipt is spent, so a retry needs a new determination, which would HALT on the hold.
 
-**Unresolved: the approval-revocation window.** Approvals live in a separate system the MES can't see. An approval revoked after the executor's last check but before the MES write is not caught; the release goes ahead. `test_approval_revoked_in_the_same_window_is_not_yet_caught` records this as a strict expected failure. Leases and cross-system approval coordination are out of scope for this iteration.
+**Unresolved, and a production blocker: the approval-revocation window.** Approvals live in a separate system the MES can't see. An approval revoked between the executor's final approval check and the MES write is not caught; the release goes ahead. It's tracked separately as a production blocker (GitHub issue: "Production blocker: approval revoked between the executor's final approval check and the MES write"). `test_approval_revoked_in_the_same_window_is_not_yet_caught` records this as a strict expected failure. Leases and cross-system approval coordination are out of scope for this iteration.
 
 ## Tests
 
@@ -191,7 +191,7 @@ Every check was also verified by disabling it in a scratch copy and confirming t
 
 ## Limitations and remaining gaps
 
-- **Approval-revocation window (unresolved).** The conditional release covers MES state only. An approval revoked between the executor's last check and the MES write isn't caught. Leases and cross-system coordination are out of scope for this iteration.
+- **Production blocker: approval-revocation window (unresolved).** The conditional release covers MES state only. An approval revoked between the executor's final approval check and the MES write isn't caught. Tracked separately as a production blocker. Leases and cross-system coordination are out of scope for this iteration.
 - **No consistent cross-system snapshot.** The authoritative view comes from sequential reads of the MES and the approval system.
 - **HMAC is symmetric.** The guarantee that the executor can't create receipts is structural, not cryptographic. Asymmetric signing is planned separately.
 - **The consumed-receipt ledger is in memory.** The claim is atomic within one process (a lock). Production needs the claim as a conditional write in a durable, shared store, so it holds across processes and restarts; planned separately.
@@ -222,8 +222,7 @@ wo_demo/
   cli.py                command line
 docs/
   authoritative-state.md  data flow and who is authoritative for what
-  walkthrough.md          5-minute walkthrough script for a manufacturing audience
-  mes-conditional-writes.md  real MES systems and whether they document conditional writes
+  walkthrough.md          5-minute walkthrough script, pinned to the reviewed demo commit
 fixtures/               synthetic MES, approval system, policy and cases
 tests/                  pytest suite, including the review regression tests
 ```

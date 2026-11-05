@@ -83,7 +83,7 @@ The executor's "not used" check (11) and marking the receipt used used to be sep
 
 ## Unresolved, out of scope for this iteration
 
-- **Approval-revocation window.** Approvals live in a separate system, and the MES conditional write can't see them. An approval revoked after the executor's last check but before the MES write is not caught, and the release goes ahead. This is recorded as a strict expected failure (`test_approval_revoked_in_the_same_window_is_not_yet_caught`), so it shows up as soon as anyone closes it. Leases and cross-system approval coordination are deliberately left out of this iteration.
+- **Approval-revocation window (production blocker).** Approvals live in a separate system, and the MES conditional write can't see them. An approval revoked between the executor's final approval check and the MES write is not caught, and the release goes ahead. It's tracked separately as a production blocker. This is recorded as a strict expected failure (`test_approval_revoked_in_the_same_window_is_not_yet_caught`), so it shows up as soon as anyone closes it. Leases and cross-system approval coordination are deliberately left out of this iteration.
 - **No cross-system snapshot.** See "Consistency of the view" above.
 - **Receipt format and HMAC signing are unchanged.** The single-use claim is now atomic within the process. Asymmetric signing and a durable, cross-process ledger are being handled separately.
 - **Source outages aren't modeled.** If the MES or the approval system can't be reached, the result should be DEFER.
